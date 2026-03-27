@@ -52,11 +52,15 @@ cd talenttrust-contracts
 # Build
 cargo build
 
-# Run tests (includes 95%+ coverage negative path testing for escrow)
+# Run tests
 cargo test
 
-# Run escrow performance/gas baseline tests only
-cargo test test::performance
+# Run access-control focused tests
+cargo test access_control
+
+# Run upgradeable storage planning tests only
+cargo test test::storage
+
 
 # Check formatting
 cargo fmt --all -- --check
@@ -65,16 +69,36 @@ cargo fmt --all -- --check
 cargo fmt --all
 ```
 
-## Escrow Emergency Controls
+## Escrow contract — acceptance handshake
 
-The escrow contract now supports critical-incident response with admin-managed controls:
+Before a client can fund an escrow contract, the assigned freelancer must explicitly accept the terms. This two-party handshake ensures no funds are committed without mutual agreement.
 
-- `initialize(admin)` (one-time setup)
-- `pause()` and `unpause()`
-- `activate_emergency_pause()` and `resolve_emergency()`
-- `is_paused()` and `is_emergency()`
+### State machine
 
-When paused, mutating escrow operations are blocked.
+```
+Created ──► Accepted ──► Funded ──► Completed
+                                └──► Disputed
+```
+
+| Status      | Meaning                                                       |
+| ----------- | ------------------------------------------------------------- |
+| `Created`   | Contract created by the client; awaiting freelancer response. |
+| `Accepted`  | Freelancer has signed off; client may now deposit funds.      |
+| `Funded`    | Funds are held in escrow; milestones may be released.         |
+| `Completed` | All milestones released; engagement concluded.                |
+| `Disputed`  | Under dispute resolution.                                     |
+
+### Key functions
+
+| Function            | Caller     | Requires status | Resulting status |
+| ------------------- | ---------- | --------------- | ---------------- |
+| `create_contract`   | client     | —               | `Created`        |
+| `accept_contract`   | freelancer | `Created`       | `Accepted`       |
+| `deposit_funds`     | client     | `Accepted`      | `Funded`         |
+| `release_milestone` | client     | `Funded`        | `Funded`         |
+| `get_status`        | anyone     | —               | —                |
+
+See [`docs/escrow/README.md`](docs/escrow/README.md) for the full contract reference.
 
 ## Contributing
 
@@ -84,6 +108,17 @@ When paused, mutating escrow operations are blocked.
    - `cargo test`
    - `cargo build`
 3. Open a pull request. CI runs `cargo fmt --all -- --check`, `cargo build`, and `cargo test` on push/PR to `main`.
+
+## Contract status transition guardrails
+
+Escrow contract status transitions are enforced using a guarded matrix to prevent invalid state changes. Supported transitions:
+
+- `Created` -> `Funded`
+- `Funded` -> `Completed`
+- `Funded` -> `Disputed`
+- `Disputed` -> `Completed`
+
+Invalid transitions cause a contract panic during execution.
 
 ## CI/CD
 
@@ -95,14 +130,15 @@ On every push and pull request to `main`, GitHub Actions:
 
 Ensure these pass locally before pushing.
 
-## Escrow Performance and Security
+## Upgradeable Storage Planning
 
-- Performance/gas baseline tests for key flows are in `contracts/escrow/src/test/performance.rs`.
-- Functional and failure-path coverage is split by module:
+- Versioned storage metadata and key namespaces are implemented in `contracts/escrow/src/lib.rs`.
+- Dedicated storage planning tests are in:
+  - `contracts/escrow/src/test/storage.rs`
   - `contracts/escrow/src/test/flows.rs`
   - `contracts/escrow/src/test/security.rs`
-- Contract-specific reviewer docs:
-  - `docs/escrow/performance-baselines.md`
+- Contract-specific documentation:
+  - `docs/escrow/upgradeable-storage.md`
   - `docs/escrow/security.md`
 
 ## License
