@@ -9,6 +9,8 @@ pub(crate) const MILESTONE_THREE: i128 = 600_0000000;
 
 // ==================== CONTRACT CREATION TESTS ====================
 
+mod timeout_tests;
+
 #[test]
 fn test_create_contract_success() {
     let env = Env::default();

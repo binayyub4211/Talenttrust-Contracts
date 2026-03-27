@@ -147,8 +147,26 @@
                               "key": {
                                 "symbol": "status"
                               },
+<<<<<<< feature/contracts-43-timeout-behavior-tests
+                              {
+                                "key": {
+                                  "symbol": "deadline_at"
+                                },
+                                "val": {
+                                  "u64": 604800
+                                }
+                              },
+                              {
+                                "key": {
+                                  "symbol": "released"
+                                },
+                                "val": {
+                                  "bool": false
+                                }
+=======
                               "val": {
                                 "u32": 0
+>>>>>>> main
                               }
                             }
                           ]

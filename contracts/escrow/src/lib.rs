@@ -214,6 +214,9 @@ pub enum DataKey {
 #[contract]
 pub struct Escrow;
 
+/// Default approval/release deadline for each milestone after contract creation.
+const DEFAULT_MILESTONE_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60;
+
 #[contractimpl]
 impl Escrow {
     /// Initializes admin-managed pause controls.
