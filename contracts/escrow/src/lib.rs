@@ -4,12 +4,41 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
+/// Persistent storage keys used by the Escrow contract.
+///
+/// Each variant corresponds to a distinct piece of contract state:
+/// - [`DataKey::Contract`] stores the full [`EscrowContract`] keyed by its numeric ID.
+/// - [`DataKey::ReputationIssued`] is a boolean flag that prevents double-issuance of
+///   reputation credentials for a given contract.
+/// - [`DataKey::NextId`] is a monotonically increasing counter for assigning contract IDs.
+#[contracttype]
+pub enum DataKey {
+    /// Full escrow contract state, keyed by the numeric contract ID.
+    Contract(u32),
+    /// Whether a reputation credential has already been issued for the given contract ID.
+    /// Immutably set to `true` on first issuance; prevents replay and double-issuance.
+    ReputationIssued(u32),
+    /// Auto-incrementing counter; incremented on every [`Escrow::create_contract`] call.
+    NextId,
+}
+
+/// The lifecycle status of an escrow contract.
+///
+/// Valid transitions:
+/// ```text
+/// Created -> Funded -> Completed
+/// Funded  -> Disputed
+/// ```
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContractStatus {
+    /// Contract created, awaiting client deposit.
     Created = 0,
+    /// Funds deposited by client; work is in progress.
     Funded = 1,
+    /// All milestones released and contract finalised by the client.
     Completed = 2,
+    /// A dispute has been raised; milestone payments are paused.
     Disputed = 3,
 }
 
@@ -17,7 +46,9 @@ pub enum ContractStatus {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Milestone {
+    /// Payment amount in stroops (1 XLM = 10_000_000 stroops).
     pub amount: i128,
+    /// Whether the client has released this milestone's funds to the freelancer.
     pub released: bool,
 }
 
