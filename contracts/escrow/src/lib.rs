@@ -148,6 +148,22 @@ pub enum EscrowError {
     MilestoneAlreadyReleased,
 }
 
+/// Persistent record for a single escrow engagement.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ContractRecord {
+    pub client: Address,
+    pub freelancer: Address,
+    pub milestones: Vec<Milestone>,
+    pub status: ContractStatus,
+}
+
+#[contracttype]
+pub enum DataKey {
+    Contract(u32),
+    NextId,
+}
+
 #[contract]
 pub struct Escrow;
 
