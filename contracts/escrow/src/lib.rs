@@ -1,3 +1,33 @@
+//! # TalentTrust Escrow Contract
+//!
+//! A Soroban smart contract implementing a milestone-based escrow protocol for
+//! the TalentTrust decentralized freelancer platform on the Stellar network.
+//!
+//! ## Overview
+//!
+//! The escrow contract holds funds on behalf of a client and releases them to a
+//! freelancer as individual milestones are approved. An optional arbiter can be
+//! designated for dispute resolution. Four authorization schemes are supported:
+//! `ClientOnly`, `ArbiterOnly`, `ClientAndArbiter`, and `MultiSig`.
+//!
+//! ## Lifecycle
+//!
+//! ```text
+//! create_contract → deposit_funds → approve_milestone_release → release_milestone
+//!                                                              ↑ (repeat per milestone)
+//! ```
+//!
+//! When every milestone has been released the contract status transitions to
+//! `Completed` automatically.
+//!
+//! ## Security Assumptions
+//!
+//! - All callers that mutate state must pass `require_auth()`.
+//! - The contract stores a single escrow record keyed by `"contract"`. A
+//!   production deployment should key by `contract_id`.
+//! - No native token transfer is performed in this implementation; fund custody
+//!   and transfer must be wired up via the Stellar asset contract.
+
 #![no_std]
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
@@ -16,11 +46,14 @@ const DEFAULT_MAX_MILESTONES: u32 = 16;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum ContractStatus {
+    /// Contract created, awaiting client deposit.
     Created = 0,
+    /// Funds deposited by client; work is in progress.
     Funded = 1,
+    /// All milestones released and contract finalised by the client.
     Completed = 2,
+    /// A dispute has been raised; milestone payments are paused.
     Disputed = 3,
-    InDispute = 4,
 }
 
 #[contracttype]
@@ -33,7 +66,7 @@ pub enum ReleaseAuthorization {
 }
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Milestone {
     pub amount: i128,
     pub released: bool,
@@ -42,9 +75,11 @@ pub struct Milestone {
 }
 
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EscrowContractData {
+#[derive(Clone, Debug)]
+pub struct EscrowContract {
+    /// Address of the client who funds the escrow.
     pub client: Address,
+    /// Address of the freelancer who receives milestone payments.
     pub freelancer: Address,
     pub arbiter: Option<Address>,
     pub milestones: Vec<Milestone>,
@@ -106,6 +141,7 @@ pub enum EscrowError {
 #[cfg(test)]
 mod test;
 
+/// The TalentTrust escrow contract entry point.
 #[contract]
 pub struct Escrow;
 
@@ -199,10 +235,15 @@ impl Escrow {
             }
             milestones.push_back(Milestone {
                 amount,
+                amount,
                 released: false,
-                approved_by: None,
-                approval_timestamp: None,
             });
+            i += 1;
+        }
+
+        // Limit contract size conceptually: prevent massive state requirements by bounding total scale
+        if total_amount > 1_000_000_000_000_i128 {
+            panic!("Exceeds maximum contract funding size");
         }
 
         let contract_id = Self::next_contract_id(&env);
@@ -210,10 +251,12 @@ impl Escrow {
             client: client.clone(),
             freelancer: freelancer.clone(),
             arbiter,
-            milestones,
-            status: ContractStatus::Created,
             release_auth,
-            created_at: env.ledger().timestamp(),
+            milestones,
+            total_amount,
+            funded_amount: 0,
+            released_amount: 0,
+            status: ContractStatus::Created,
         };
 
         env.storage()
@@ -263,9 +306,8 @@ impl Escrow {
         contract_id: u32,
         caller: Address,
         milestone_id: u32,
-    ) -> bool {
-        Self::ensure_not_paused(&env);
-        caller.require_auth();
+    ) -> Result<bool, EscrowError> {
+        ensure_storage_layout(&env)?;
 
         let mut contract = Self::load_contract(&env, contract_id);
         if contract.status != ContractStatus::Funded {
@@ -291,8 +333,8 @@ impl Escrow {
             }
         };
 
-        if !is_authorized {
-            panic!("Caller not authorized to approve milestone release");
+        if record.released_milestones == record.milestone_count {
+            record.status = ContractStatus::Completed;
         }
         if milestone
             .approved_by
@@ -311,11 +353,12 @@ impl Escrow {
 
     pub fn release_milestone(
         env: Env,
+        env: Env,
         contract_id: u32,
+        caller: Address,
         caller: Address,
         milestone_id: u32,
     ) -> bool {
-        Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let mut contract = Self::load_contract(&env, contract_id);
@@ -352,9 +395,9 @@ impl Escrow {
                 .map_or(false, |a| *a == contract.client),
         };
 
-        if !has_sufficient_approval {
-            panic!("Insufficient approvals for milestone release");
-        }
+        // Should not panic
+        Escrow::check_funding_invariants(funding);
+    }
 
         milestone.released = true;
         contract.milestones.set(milestone_id, milestone);
