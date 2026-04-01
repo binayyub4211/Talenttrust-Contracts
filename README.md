@@ -1,27 +1,24 @@
 # TalentTrust Contracts
 
-Soroban smart contracts for the TalentTrust decentralized freelancer escrow protocol on the Stellar network.
+Soroban smart contracts for the TalentTrust freelancer escrow protocol on Stellar.
 
-## What's in this repo
+## Repository Scope
 
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
 - **Escrow fee model**: Configurable protocol fee per release with accounting/withdrawal paths (`protocol_fee_bps`, `protocol_fee_account`).
 
-## Prerequisites
+Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md) and threat analysis in [docs/escrow/security.md](docs/escrow/security.md).
 
-- [Rust](https://rustup.rs/) (stable, 1.75+)
-- `rustfmt`: `rustup component add rustfmt`
-- Optional: [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli) for deployment
+## Security Model
 
-## Setup
+The escrow implementation follows a fail-closed state machine:
 
-```bash
-# Clone (or you're already in the repo)
-git clone <your-repo-url>
-cd talenttrust-contracts
-
-# Build
-cargo build
+- contract creation requires client authorization and rejects invalid participant or milestone metadata before persisting state
+- deposits cannot exceed the required escrow total
+- releases require the recorded client, a valid unreleased milestone, and enough funded balance to cover the payment
+- reputation is gated behind contract completion and is issued once per contract
+- governance changes use a one-time initialization plus a two-step admin transfer
+- pause and emergency controls block all state-changing escrow operations while active
 
 # Run tests (includes 95%+ coverage negative path testing for escrow)
 cargo test
@@ -31,9 +28,8 @@ cargo test test::performance
 
 # Check formatting
 cargo fmt --all -- --check
-
-# Format code
-cargo fmt --all
+cargo test -p escrow
+cargo test test::performance -p escrow
 ```
 
 ## Escrow Emergency Controls
@@ -58,14 +54,13 @@ When paused, mutating escrow operations are blocked.
 
 ## Contract status transition guardrails
 
-Escrow contract status transitions are enforced using a guarded matrix to prevent invalid state changes. Supported transitions:
+Prerequisites:
 
-- `Created` -> `Funded`
-- `Funded` -> `Completed`
-- `Funded` -> `Disputed`
-- `Disputed` -> `Completed`
+- Rust 1.75+
+- `rustfmt`
+- optional Stellar CLI for deployment workflows
 
-Invalid transitions cause a contract panic during execution.
+Common commands:
 
 ## Escrow closure finalization
 
