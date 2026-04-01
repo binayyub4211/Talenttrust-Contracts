@@ -120,6 +120,13 @@ Escrow contract status transitions are enforced using a guarded matrix to preven
 
 Invalid transitions cause a contract panic during execution.
 
+## Escrow closure finalization
+
+- `finalize_contract` records immutable close metadata (timestamp, finalizer, summary)
+- Finalization allowed only from `Completed` or `Disputed` status
+- Finalization can only be executed by contract parties (client/freelancer/arbiter)
+- Once finalized, the contract summary and record are immutable
+
 ## CI/CD
 
 On every push and pull request to `main`, GitHub Actions:

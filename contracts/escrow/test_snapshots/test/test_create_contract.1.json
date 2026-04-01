@@ -148,6 +148,18 @@
                               },
                               {
                                 "key": {
+                                  "symbol": "approval_timestamp"
+                                },
+                                "val": "void"
+                              },
+                              {
+                                "key": {
+                                  "symbol": "approved_by"
+                                },
+                                "val": "void"
+                              },
+                              {
+                                "key": {
                                   "symbol": "released"
                                 },
                                 "val": {
