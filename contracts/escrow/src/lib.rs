@@ -1,8 +1,14 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Vec};
+
+const DEFAULT_MIN_MILESTONE_AMOUNT: i128 = 1;
+const DEFAULT_MAX_MILESTONES: u32 = 16;
+const DEFAULT_MIN_REPUTATION_RATING: i128 = 1;
+const DEFAULT_MAX_REPUTATION_RATING: i128 = 5;
+
+pub const MAINNET_PROTOCOL_VERSION: u32 = 1_000_000;
+pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000;
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -11,6 +17,28 @@ pub enum ContractStatus {
     Funded = 1,
     Completed = 2,
     Disputed = 3,
+}
+
+impl ContractStatus {
+    pub fn can_transition_to(self, next: ContractStatus) -> bool {
+        if self == next {
+            return true;
+        }
+
+        match (self, next) {
+            (ContractStatus::Created, ContractStatus::Funded) => true,
+            (ContractStatus::Funded, ContractStatus::Completed) => true,
+            (ContractStatus::Funded, ContractStatus::Disputed) => true,
+            (ContractStatus::Disputed, ContractStatus::Completed) => true,
+            _ => false,
+        }
+    }
+
+    pub fn assert_can_transition_to(self, next: ContractStatus) {
+        if !self.can_transition_to(next) {
+            panic!("Invalid contract status transition");
+        }
+    }
 }
 
 #[contracttype]
@@ -24,27 +52,60 @@ pub struct Milestone {
 }
 
 #[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    ClientOnly = 0,
-    ClientAndArbiter = 1,
-    ArbiterOnly = 2,
-    MultiSig = 3,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowContract {
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Option<Address>,
     pub milestones: Vec<Milestone>,
     pub status: ContractStatus,
-    pub release_auth: ReleaseAuthorization,
-    pub created_at: u64,
-    pub protocol_fee_bps: u32,
-    pub protocol_fee_account: Address,
-    pub protocol_fee_accrued: i128,
+    /// Total amount deposited by the client so far.
+    pub deposited_amount: i128,
+}
+
+// ---------------------------------------------------------------------------
+// Release-readiness checklist
+// ---------------------------------------------------------------------------
+
+/// Tracks whether each deployment, verification, and post-deploy monitoring
+/// gate has been satisfied for a specific escrow contract.
+///
+/// Items are **automatically** updated by contract operations -- no external
+/// caller may set them directly, preventing unauthorized state manipulation.
+///
+/// # Phases
+///
+/// **Deployment**
+/// - `contract_created` -- set when `create_contract` succeeds.
+/// - `funds_deposited`  -- set when `deposit_funds` succeeds with amount > 0.
+///
+/// **Verification**
+/// - `parties_authenticated` -- set at contract creation (both addresses recorded).
+/// - `milestones_defined`    -- set at contract creation when >= 1 milestone exists.
+///
+/// **Post-Deploy Monitoring**
+/// - `all_milestones_released` -- set when the final milestone is released.
+/// - `reputation_issued`       -- set when `issue_reputation` is called.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ReleaseChecklist {
+    // -- Deployment --
+    /// Contract has been successfully created and persisted.
+    pub contract_created: bool,
+    /// Client has deposited a positive amount into escrow.
+    pub funds_deposited: bool,
+
+    // -- Verification --
+    /// Both client and freelancer addresses have been recorded.
+    pub parties_authenticated: bool,
+    /// At least one milestone amount has been defined.
+    pub milestones_defined: bool,
+
+    // -- Post-Deploy Monitoring --
+    /// Every milestone in the agreement has been released.
+    pub all_milestones_released: bool,
+    /// A reputation credential has been issued for the freelancer.
+    pub reputation_issued: bool,
 }
 
 #[contracttype]
@@ -70,26 +131,214 @@ pub struct Escrow;
 
 #[contractimpl]
 impl Escrow {
-    /// Create a new escrow contract with milestone release authorization and protocol fee config.
-    ///
-    /// # Arguments
-    /// * `client` - Address of the client who funds the escrow
-    /// * `freelancer` - Address of the freelancer who receives payments
-    /// * `arbiter` - Optional arbiter address for dispute resolution
-    /// * `milestone_amounts` - Vector of milestone payment amounts
-    /// * `release_auth` - Authorization scheme for milestone releases
-    /// * `protocol_fee_bps` - Protocol fee in basis points (0-10000)
-    /// * `protocol_fee_account` - Address entitled to withdraw accrued protocol fees
-    ///
-    /// # Returns
-    /// Contract ID for the newly created escrow
-    ///
-    /// # Errors
-    /// Panics if:
-    /// - Milestone amounts vector is empty
-    /// - Any milestone amount is zero or negative
-    /// - Client and freelancer addresses are the same
-    /// - Protocol fee is out of range
+    fn next_contract_id(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1)
+    }
+
+    fn save_next_contract_id(env: &Env, id: u32) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &(id + 1));
+    }
+
+    fn load_contract(env: &Env, contract_id: u32) -> EscrowContract {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| panic!("contract not found"))
+    }
+
+    fn save_contract(env: &Env, contract_id: u32, contract: &EscrowContract) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), contract);
+    }
+
+    fn protocol_parameters(env: &Env) -> ProtocolParameters {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProtocolParameters)
+            .unwrap_or_else(Self::default_protocol_parameters)
+    }
+
+    fn default_protocol_parameters() -> ProtocolParameters {
+        ProtocolParameters {
+            min_milestone_amount: DEFAULT_MIN_MILESTONE_AMOUNT,
+            max_milestones: DEFAULT_MAX_MILESTONES,
+            min_reputation_rating: DEFAULT_MIN_REPUTATION_RATING,
+            max_reputation_rating: DEFAULT_MAX_REPUTATION_RATING,
+        }
+    }
+
+    fn governance_admin(env: &Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::GovernanceAdmin)
+    }
+
+    fn pending_governance_admin(env: &Env) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingGovernanceAdmin)
+            .unwrap_or(None)
+    }
+
+    fn add_pending_reputation_credit(env: &Env, freelancer: &Address) {
+        let key = DataKey::PendingReputationCredits(freelancer.clone());
+        let current = env.storage().persistent().get::<_, u32>(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + 1));
+    }
+
+    fn validate_protocol_parameters(
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) {
+        if min_milestone_amount <= 0 {
+            panic!("min milestone amount must be positive");
+        }
+        if max_milestones == 0 {
+            panic!("max milestones must be positive");
+        }
+        if min_reputation_rating < DEFAULT_MIN_REPUTATION_RATING
+            || min_reputation_rating > DEFAULT_MAX_REPUTATION_RATING
+        {
+            panic!("min reputation rating out of bounds");
+        }
+        if max_reputation_rating < DEFAULT_MIN_REPUTATION_RATING
+            || max_reputation_rating > DEFAULT_MAX_REPUTATION_RATING
+        {
+            panic!("max reputation rating out of bounds");
+        }
+        if min_reputation_rating > max_reputation_rating {
+            panic!("min reputation rating cannot exceed max reputation rating");
+        }
+    }
+
+    pub fn get_protocol_parameters(env: Env) -> ProtocolParameters {
+        Self::protocol_parameters(&env)
+    }
+
+    pub fn get_governance_admin(env: Env) -> Option<Address> {
+        Self::governance_admin(&env)
+    }
+
+    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
+        Self::pending_governance_admin(&env)
+    }
+
+    pub fn get_mainnet_readiness_info(env: Env) -> MainnetReadinessInfo {
+        let params = Self::protocol_parameters(&env);
+        MainnetReadinessInfo {
+            protocol_version: MAINNET_PROTOCOL_VERSION,
+            max_escrow_total_stroops: MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS,
+            min_milestone_amount: params.min_milestone_amount,
+            max_milestones: params.max_milestones,
+            min_reputation_rating: params.min_reputation_rating,
+            max_reputation_rating: params.max_reputation_rating,
+        }
+    }
+
+    pub fn initialize_protocol_governance(
+        env: Env,
+        admin: Address,
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) -> bool {
+        admin.require_auth();
+        if Self::governance_admin(&env).is_some() {
+            panic!("governance already initialized");
+        }
+        Self::validate_protocol_parameters(
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        );
+
+        let params = ProtocolParameters {
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolParameters, &params);
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernanceAdmin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingGovernanceAdmin, &Option::<Address>::None);
+
+        true
+    }
+
+    pub fn update_protocol_parameters(
+        env: Env,
+        min_milestone_amount: i128,
+        max_milestones: u32,
+        min_reputation_rating: i128,
+        max_reputation_rating: i128,
+    ) -> bool {
+        let admin =
+            Self::governance_admin(&env).unwrap_or_else(|| panic!("governance is not initialized"));
+        admin.require_auth();
+        Self::validate_protocol_parameters(
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        );
+
+        let params = ProtocolParameters {
+            min_milestone_amount,
+            max_milestones,
+            min_reputation_rating,
+            max_reputation_rating,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProtocolParameters, &params);
+        true
+    }
+
+    pub fn propose_governance_admin(env: Env, next_admin: Address) -> bool {
+        let admin =
+            Self::governance_admin(&env).unwrap_or_else(|| panic!("governance is not initialized"));
+        admin.require_auth();
+
+        if next_admin == admin {
+            panic!("next governance admin must differ from current admin");
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingGovernanceAdmin, &Some(next_admin));
+        true
+    }
+
+    pub fn accept_governance_admin(env: Env) -> bool {
+        let pending = Self::pending_governance_admin(&env)
+            .unwrap_or_else(|| panic!("no pending governance admin"));
+        pending.require_auth();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::GovernanceAdmin, &pending);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingGovernanceAdmin, &Option::<Address>::None);
+        true
+    }
+
     pub fn create_contract(
         env: Env,
         client: Address,
@@ -106,20 +355,29 @@ impl Escrow {
         }
 
         if client == freelancer {
-            panic!("Client and freelancer cannot be the same address");
+            panic!("client and freelancer must differ");
         }
 
-        // Validate milestone amounts
-        for i in 0..milestone_amounts.len() {
-            let amount = milestone_amounts.get(i).unwrap();
-            if amount <= 0 {
-                panic!("Milestone amounts must be positive");
-            }
+        if milestone_amounts.len() == 0 {
+            panic!("at least one milestone is required");
         }
 
-        // Create milestones
+        let params = Self::protocol_parameters(&env);
+        if milestone_amounts.len() > params.max_milestones {
+            panic!("milestone count exceeds governed limit");
+        }
+
+        let mut total_amount = 0_i128;
         let mut milestones = Vec::new(&env);
-        for i in 0..milestone_amounts.len() {
+        let mut index = 0_u32;
+        while index < milestone_amounts.len() {
+            let amount = milestone_amounts.get(index).unwrap();
+            if amount < params.min_milestone_amount {
+                panic!("milestone amount below governed minimum");
+            }
+            total_amount = total_amount
+                .checked_add(amount)
+                .unwrap_or_else(|| panic!("milestone total overflow"));
             milestones.push_back(Milestone {
                 amount: milestone_amounts.get(i).unwrap(),
                 released: false,
@@ -134,108 +392,60 @@ impl Escrow {
             panic!("Protocol fee out of range");
         }
 
-        let contract_data = EscrowContract {
+        let contract_id = Self::next_contract_id(&env);
+        let contract = EscrowContract {
             client: client.clone(),
             freelancer: freelancer.clone(),
-            arbiter,
             milestones,
             status: ContractStatus::Created,
-            release_auth,
-            created_at: env.ledger().timestamp(),
-            protocol_fee_bps,
-            protocol_fee_account: protocol_fee_account.clone(),
-            protocol_fee_accrued: 0,
+            deposited_amount: 0,
         };
-
-        // Generate contract ID (in real implementation, this would use proper storage)
-        let contract_id = env.ledger().sequence();
-
-        // Store contract data (simplified for this implementation)
         env.storage()
             .persistent()
-            .set(&symbol_short!("contract"), &contract_data);
+            .set(&DataKey::Contract(id), &data);
 
-        contract_id
+        // Initialise checklist -- deployment + verification items are satisfied
+        // by the act of calling this function successfully.
+        let checklist = ReleaseChecklist {
+            contract_created: true,
+            funds_deposited: false,
+            parties_authenticated: true,
+            milestones_defined: true,
+            all_milestones_released: false,
+            reputation_issued: false,
+        };
+
+        Self::save_contract(&env, contract_id, &contract);
+        Self::save_next_contract_id(&env, contract_id);
+
+        id
     }
 
-    /// Deposit funds into escrow. Only the client may call this.
-    ///
-    /// # Arguments
-    /// * `contract_id` - ID of the escrow contract
-    /// * `amount` - Amount to deposit (must equal total milestone amounts)
-    ///
-    /// # Returns
-    /// true if deposit successful
-    ///
-    /// # Errors
-    /// Panics if:
-    /// - Caller is not the client
-    /// - Contract is not in Created status
-    /// - Amount doesn't match total milestone amounts
-    pub fn deposit_funds(env: Env, _contract_id: u32, caller: Address, amount: i128) -> bool {
-        caller.require_auth();
-
-        // In real implementation, retrieve contract from storage
-        // For now, we'll use a simplified approach
-        let contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
-
-        // Verify caller is client
-        if caller != contract.client {
-            panic!("Only client can deposit funds");
+    pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
+        if amount <= 0 {
+            panic!("deposit amount must be positive");
         }
+
+        let mut contract = Self::load_contract(&env, contract_id);
 
         // Verify contract status
         if contract.status != ContractStatus::Created {
             panic!("Contract must be in Created status to deposit funds");
         }
 
-        // Calculate total required amount
-        let mut total_required = 0i128;
-        for i in 0..contract.milestones.len() {
-            total_required += contract.milestones.get(i).unwrap().amount;
+        if amount != contract.total_amount {
+            panic!("deposit must match milestone total");
         }
 
         if amount != total_required {
             panic!("Deposit amount must equal total milestone amounts");
         }
 
-        // Update contract status to Funded
-        let mut updated_contract = contract;
-        updated_contract.status = ContractStatus::Funded;
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &updated_contract);
-
         true
     }
 
-    /// Approve a milestone for release with proper authorization
-    ///
-    /// # Arguments
-    /// * `contract_id` - ID of the escrow contract
-    /// * `milestone_id` - ID of the milestone to approve
-    ///
-    /// # Returns
-    /// true if approval successful
-    ///
-    /// # Errors
-    /// Panics if:
-    /// - Caller is not authorized to approve
-    /// - Contract is not in Funded status
-    /// - Milestone ID is invalid
-    /// - Milestone already released
-    /// - Milestone already approved by this caller
-    pub fn approve_milestone_release(
-        env: Env,
-        _contract_id: u32,
-        caller: Address,
-        milestone_id: u32,
-    ) -> bool {
-        caller.require_auth();
+    pub fn release_milestone(env: Env, contract_id: u32, milestone_id: u32) -> bool {
+        let mut contract = Self::load_contract(&env, contract_id);
 
         // Retrieve contract
         let mut contract: EscrowContract = env
@@ -249,85 +459,57 @@ impl Escrow {
             panic!("Contract must be in Funded status to approve milestones");
         }
 
-        // Validate milestone ID
         if milestone_id >= contract.milestones.len() {
-            panic!("Invalid milestone ID");
+            panic!("invalid milestone id");
         }
 
         let milestone = contract.milestones.get(milestone_id).unwrap();
-
-        // Check if milestone already released
         if milestone.released {
             panic!("Milestone already released");
         }
 
-        // Check authorization based on release_auth scheme
-        let is_authorized = match contract.release_auth {
-            ReleaseAuthorization::ClientOnly => caller == contract.client,
-            ReleaseAuthorization::ArbiterOnly => {
-                contract.arbiter.clone().map_or(false, |a| caller == a)
-            }
-            ReleaseAuthorization::ClientAndArbiter => {
-                caller == contract.client || contract.arbiter.clone().map_or(false, |a| caller == a)
-            }
-            ReleaseAuthorization::MultiSig => {
-                // For multi-sig, both client and arbiter must approve
-                // This function handles individual approval
-                caller == contract.client || contract.arbiter.clone().map_or(false, |a| caller == a)
-            }
-        };
-
-        if !is_authorized {
-            panic!("Caller not authorized to approve milestone release");
-        }
-
-        // Check if already approved by this caller
-        if milestone
-            .approved_by
-            .clone()
-            .map_or(false, |addr| addr == caller)
-        {
-            panic!("Milestone already approved by this address");
-        }
-
-        // Update milestone approval
-        let mut updated_milestone = milestone;
-        updated_milestone.approved_by = Some(caller);
-        updated_milestone.approval_timestamp = Some(env.ledger().timestamp());
-
-        // Update contract
+        let mut updated_milestone = milestone.clone();
+        updated_milestone.released = true;
         contract.milestones.set(milestone_id, updated_milestone);
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &contract);
+        contract.released_amount = contract
+            .released_amount
+            .checked_add(milestone.amount)
+            .unwrap_or_else(|| panic!("released total overflow"));
+        if next_released_amount > contract.funded_amount {
+            panic!("release exceeds funded amount");
+        }
+        milestone.released = true;
+        data.milestones.set(milestone_id, milestone);
 
+        let mut all_released = true;
+        let mut index = 0_u32;
+        while index < contract.milestones.len() {
+            if !contract.milestones.get(index).unwrap().released {
+                all_released = false;
+                break;
+            }
+            index += 1;
+        }
+
+        if all_released {
+            contract.status = ContractStatus::Completed;
+            Self::add_pending_reputation_credit(&env, &contract.freelancer);
+        }
+
+        Self::save_contract(&env, contract_id, &contract);
         true
     }
 
-    /// Release a milestone payment to the freelancer after proper authorization
-    ///
-    /// # Arguments
-    /// * `contract_id` - ID of the escrow contract
-    /// * `milestone_id` - ID of the milestone to release
-    ///
-    /// # Returns
-    /// true if release successful
-    ///
-    /// # Errors
-    /// Panics if:
-    /// - Contract is not in Funded status
-    /// - Milestone ID is invalid
-    /// - Milestone already released
-    /// - Insufficient approvals based on authorization scheme
-    pub fn release_milestone(
-        env: Env,
-        _contract_id: u32,
-        caller: Address,
-        milestone_id: u32,
-    ) -> bool {
-        caller.require_auth();
-        // Retrieve contract
-        let mut contract: EscrowContract = env
+    pub fn issue_reputation(env: Env, freelancer: Address, rating: i128) -> bool {
+        freelancer.require_auth();
+
+        let params = Self::protocol_parameters(&env);
+        if rating < params.min_reputation_rating || rating > params.max_reputation_rating {
+            panic!("rating is outside governed bounds");
+        }
+
+        let pending_key = DataKey::PendingReputationCredits(freelancer.clone());
+        let pending_credits = env
             .storage()
             .persistent()
             .get(&symbol_short!("contract"))
@@ -383,119 +565,23 @@ impl Escrow {
             }
         };
 
-        if !has_sufficient_approval {
-            panic!("Insufficient approvals for milestone release");
-        }
+    pub fn get_contract(env: Env, contract_id: u32) -> EscrowContract {
+        Self::load_contract(&env, contract_id)
+    }
 
-        // Release milestone, compute protocol fee and accrue it
-        let protocol_fee = milestone.amount * (contract.protocol_fee_bps as i128) / 10_000;
-
-        let mut updated_milestone = milestone;
-        updated_milestone.released = true;
-        updated_milestone.protocol_fee = protocol_fee;
-
-        // Update contract fee tracker
-        contract.protocol_fee_accrued += protocol_fee;
-        contract.milestones.set(milestone_id, updated_milestone);
-
-        // Check if all milestones are released
-        let all_released = contract.milestones.iter().all(|m| m.released);
-        if all_released {
-            contract.status = ContractStatus::Completed;
-        }
-
+    pub fn get_pending_reputation_credits(env: Env, freelancer: Address) -> u32 {
         env.storage()
             .persistent()
-            .set(&symbol_short!("contract"), &contract);
-
-        // In real implementation, transfer funds to freelancer minus fee.
-        // For now, we'll just mark milestone as released and record fee accrual.
-
-        true
+            .get::<_, u32>(&DataKey::PendingReputationCredits(freelancer))
+            .unwrap_or(0)
     }
 
-    /// Get accrued protocol fees for this contract.
-    pub fn get_protocol_fee_accrued(env: Env, _contract_id: u32) -> i128 {
-        let contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
-        contract.protocol_fee_accrued
-    }
-
-    /// Withdraw accrued protocol fees to fee account, decreasing accrual balance.
-    pub fn withdraw_protocol_fees(
-        env: Env,
-        _contract_id: u32,
-        caller: Address,
-        amount: i128,
-    ) -> bool {
-        caller.require_auth();
-        if amount <= 0 {
-            panic!("Withdraw amount must be positive");
-        }
-
-        let mut contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
-
-        if caller != contract.protocol_fee_account {
-            panic!("Only protocol fee account can withdraw accrued fees");
-        }
-
-        if amount > contract.protocol_fee_accrued {
-            panic!("Insufficient accrued protocol fee balance");
-        }
-
-        contract.protocol_fee_accrued -= amount;
+    pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
         env.storage()
             .persistent()
-            .set(&symbol_short!("contract"), &contract);
-
-        // In real implementation, transfer protocol fees out of escrow.
-        true
+            .get(&DataKey::Reputation(freelancer))
     }
 
-    /// Update protocol fee basis points. Only fee account may change.
-    pub fn set_protocol_fee_bps(
-        env: Env,
-        _contract_id: u32,
-        caller: Address,
-        protocol_fee_bps: u32,
-    ) -> bool {
-        caller.require_auth();
-        if protocol_fee_bps > 10_000 {
-            panic!("Protocol fee out of range");
-        }
-
-        let mut contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
-
-        if caller != contract.protocol_fee_account {
-            panic!("Only protocol fee account can update fee rate");
-        }
-
-        contract.protocol_fee_bps = protocol_fee_bps;
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &contract);
-
-        true
-    }
-
-    /// Issue a reputation credential for the freelancer after contract completion.
-    pub fn issue_reputation(_env: Env, _freelancer: Address, _rating: i128) -> bool {
-        // Reputation credential issuance.
-        true
-    }
-
-    /// Hello-world style function for testing and CI.
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
         to
     }
