@@ -4,6 +4,8 @@ use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
 use crate::{Escrow, EscrowClient};
 
+mod ttl_tests;
+
 #[test]
 fn test_hello() {
     let env = Env::default();
