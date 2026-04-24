@@ -24,7 +24,7 @@ fn test_create_contract() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
-    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones, &None, &None);
     assert_eq!(id, 0);
 }
 
