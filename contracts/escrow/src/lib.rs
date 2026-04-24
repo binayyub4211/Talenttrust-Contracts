@@ -113,10 +113,7 @@ impl Escrow {
             total = total
                 .checked_add(amount)
                 .filter(|&t| t <= MAX_TOTAL_ESCROW_STROOPS)
-                .unwrap_or_else(|| {
-                    env.panic_with_error(EscrowError::TotalCapExceeded);
-                    0 // unreachable — panic_with_error diverges
-                });
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::TotalCapExceeded));
         }
 
         // ── Persist ───────────────────────────────────────────────────────────
