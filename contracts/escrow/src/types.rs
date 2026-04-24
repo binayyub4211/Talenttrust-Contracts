@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, String};
+use soroban_sdk::{contracterror, contracttype, Bytes, String};
 
 #[contracttype]
 pub enum DataKey {
@@ -6,6 +6,9 @@ pub enum DataKey {
     Freelancer,
     Milestones,
     Initialized,
+    TermsHash,
+    GracePeriod,
+    MilestoneApprovalTime,
 }
 
 #[contracterror]
@@ -17,6 +20,8 @@ pub enum Error {
     IndexOutOfBounds = 3,
     AlreadyReleased = 4,
     InvalidStatusTransition = 5,
+    GracePeriodNotExpired = 6,
+    TermsHashAlreadySet = 7,
 }
 
 #[contracttype]
@@ -34,4 +39,6 @@ pub struct Milestone {
     pub amount: i128,
     pub released: bool,
     pub work_evidence: Option<String>,
+    pub approval_time: Option<u64>,
 }
+
