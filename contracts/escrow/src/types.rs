@@ -6,6 +6,38 @@ pub enum DataKey {
     Freelancer,
     Milestones,
     Initialized,
+    ReadinessChecklist,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadinessChecklist {
+    pub caps_set: bool,
+    pub governed_params_set: bool,
+    pub emergency_controls_enabled: bool,
+    pub initialized: bool,
+}
+
+impl Default for ReadinessChecklist {
+    fn default() -> Self {
+        Self {
+            caps_set: false,
+            governed_params_set: false,
+            emergency_controls_enabled: false,
+            initialized: false,
+        }
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MainnetReadinessInfo {
+    pub caps_set: bool,
+    pub governed_params_set: bool,
+    pub emergency_controls_enabled: bool,
+    pub initialized: bool,
+    pub protocol_version: u32,
+    pub max_escrow_total_stroops: i128,
 }
 
 #[contracterror]
