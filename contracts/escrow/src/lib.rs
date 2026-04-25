@@ -12,6 +12,10 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
+use types::ContractStatus;
+
+mod types;
+
 #[contract]
 pub struct Escrow;
 
@@ -23,11 +27,11 @@ pub enum EscrowError {
     InvalidMilestoneAmount = 3,
     InvalidDepositAmount = 4,
     InvalidMilestone = 5,
-    PendingApprovalExists = 6,
-    PendingApprovalNotFound = 7,
-    PendingMigrationExists = 8,
-    PendingMigrationNotFound = 9,
-    Unauthorized = 10,
+    UnauthorizedRole = 6,
+    InvalidStatusTransition = 7,
+    AlreadyCancelled = 8,
+    ContractNotFound = 9,
+    MilestonesAlreadyReleased = 10,
 }
 
 #[contracttype]
@@ -35,7 +39,11 @@ pub enum EscrowError {
 pub struct ContractData {
     pub client: Address,
     pub freelancer: Address,
+    pub arbiter: Option<Address>,
     pub milestones: Vec<i128>,
+    pub status: ContractStatus,
+    pub total_deposited: i128,
+    pub released_amount: i128,
 }
 
 #[contracttype]
@@ -61,8 +69,8 @@ pub struct PendingMigration {
 enum DataKey {
     NextId,
     Contract(u32),
-    PendingApproval(u32),
-    PendingMigration,
+    MilestoneReleased(u32, u32),
+    RefundableBalance(u32),
 }
 
 #[contractimpl]
@@ -76,11 +84,20 @@ impl Escrow {
         env: Env,
         client: Address,
         freelancer: Address,
+        arbiter: Option<Address>,
         milestones: Vec<i128>,
     ) -> u32 {
         if client == freelancer {
             env.panic_with_error(EscrowError::InvalidParticipant);
         }
+
+        // Validate arbiter doesn't overlap with client/freelancer
+        if let Some(ref a) = arbiter {
+            if *a == client || *a == freelancer {
+                env.panic_with_error(EscrowError::InvalidParticipant);
+            }
+        }
+
         if milestones.is_empty() {
             env.panic_with_error(EscrowError::EmptyMilestones);
         }
@@ -100,7 +117,11 @@ impl Escrow {
         let data = ContractData {
             client,
             freelancer,
+            arbiter,
             milestones,
+            status: ContractStatus::Created,
+            total_deposited: 0,
+            released_amount: 0,
         };
 
         env.storage()
@@ -111,177 +132,158 @@ impl Escrow {
         id
     }
 
-    pub fn deposit_funds(env: Env, _contract_id: u32, amount: i128) -> bool {
+    pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidDepositAmount);
         }
+
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        contract.total_deposited += amount;
+
+        // Update status to Funded if not already
+        if contract.status == ContractStatus::Created {
+            contract.status = ContractStatus::Funded;
+        }
+
+        env.storage().persistent().set(&contract_key, &contract);
+
         true
     }
 
     pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
-        let _ = (env, contract_id, milestone_index);
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Mark this milestone as released
+        let milestone_key = DataKey::MilestoneReleased(contract_id, milestone_index);
+        env.storage().persistent().set(&milestone_key, &true);
+
+        // Update released amount
+        if let Some(amount) = contract.milestones.get(milestone_index) {
+            contract.released_amount += amount;
+        }
+
+        env.storage().persistent().set(&contract_key, &contract);
+
         true
     }
 
-    pub fn request_approval(env: Env, approver: Address, contract_id: u32) -> PendingApproval {
-        approver.require_auth();
+    /// Get contract details
+    pub fn get_contract(env: Env, contract_id: u32) -> ContractData {
+        env.storage()
+            .persistent()
+            .get::<_, ContractData>(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
+    }
 
-        let key = DataKey::PendingApproval(contract_id);
-        if ttl::has_transient(&env, &key) {
-            env.panic_with_error(EscrowError::PendingApprovalExists);
+    /// Get milestones for a contract
+    pub fn get_milestones(env: Env, contract_id: u32) -> Vec<i128> {
+        let contract = Self::get_contract(env.clone(), contract_id);
+        contract.milestones
+    }
+
+    /// Cancel an escrow contract under strict authorization and state constraints
+    pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        // 1. Require cryptographic authorization
+        caller.require_auth();
+
+        // 2. Load contract data
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // 3. Check if already cancelled (idempotency guard)
+        if contract.status == ContractStatus::Cancelled {
+            env.panic_with_error(EscrowError::AlreadyCancelled);
         }
 
-        let requested_at_ledger = env.ledger().sequence();
-        let expires_at_ledger = ttl::compute_expiry(&env, PENDING_APPROVAL_TTL_LEDGERS);
-
-        let pending = PendingApproval {
-            approver: approver.clone(),
-            contract_id,
-            requested_at_ledger,
-            expires_at_ledger,
-        };
-
-        ttl::store_with_ttl(&env, &key, &pending, PENDING_APPROVAL_TTL_LEDGERS);
-
-        env.events().publish(
-            (symbol_short!("ttl"), symbol_short!("requested")),
-            (
-                symbol_short!("approval"),
-                contract_id,
-                approver,
-                requested_at_ledger,
-                expires_at_ledger,
-            ),
-        );
-
-        pending
-    }
-
-    pub fn cancel_approval(env: Env, approver: Address, contract_id: u32) {
-        approver.require_auth();
-
-        let key = DataKey::PendingApproval(contract_id);
-        let pending: PendingApproval = ttl::read_if_live(&env, &key)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PendingApprovalNotFound));
-
-        if pending.approver != approver {
-            env.panic_with_error(EscrowError::Unauthorized);
+        // 4. Block cancellation in terminal states
+        if contract.status == ContractStatus::Completed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
         }
 
-        ttl::remove_transient(&env, &key);
+        // 5. Role-based authorization with state checks
+        let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
+        let is_arbiter = contract.arbiter.as_ref().is_some_and(|a| *a == caller);
 
-        env.events().publish(
-            (symbol_short!("ttl"), symbol_short!("cancelled")),
-            (symbol_short!("approval"), contract_id, approver),
-        );
-    }
+        match contract.status {
+            ContractStatus::Created => {
+                // Client or freelancer can cancel before funding
+                if !is_client && !is_freelancer {
+                    env.panic_with_error(EscrowError::UnauthorizedRole);
+                }
+            }
+            ContractStatus::Funded => {
+                // Calculate released milestones
+                let released_amount = Self::calculate_released_amount(&env, contract_id, &contract);
 
-    pub fn get_pending_approval(env: Env, contract_id: u32) -> Option<PendingApproval> {
-        ttl::read_if_live(&env, &DataKey::PendingApproval(contract_id))
-    }
-
-    pub fn extend_pending_approval(env: Env, approver: Address, contract_id: u32) -> bool {
-        approver.require_auth();
-
-        let key = DataKey::PendingApproval(contract_id);
-        ttl::extend_if_below_threshold(
-            &env,
-            &key,
-            PENDING_APPROVAL_BUMP_THRESHOLD,
-            PENDING_APPROVAL_TTL_LEDGERS,
-        )
-    }
-
-    pub fn request_migration(
-        env: Env,
-        proposer: Address,
-        new_wasm_hash: BytesN<32>,
-    ) -> PendingMigration {
-        proposer.require_auth();
-
-        let key = DataKey::PendingMigration;
-        if ttl::has_transient(&env, &key) {
-            env.panic_with_error(EscrowError::PendingMigrationExists);
+                if is_client {
+                    // Client can cancel only if NO milestones released
+                    if released_amount > 0 {
+                        env.panic_with_error(EscrowError::MilestonesAlreadyReleased);
+                    }
+                } else if is_freelancer {
+                    // Freelancer can cancel (economic deterrent - funds return to client)
+                    // No additional checks needed
+                } else if is_arbiter {
+                    // Arbiter can cancel in funded state (dispute resolution)
+                } else {
+                    env.panic_with_error(EscrowError::UnauthorizedRole);
+                }
+            }
+            ContractStatus::Disputed => {
+                // Only arbiter can cancel disputed contracts
+                if !is_arbiter {
+                    env.panic_with_error(EscrowError::UnauthorizedRole);
+                }
+            }
+            _ => {
+                env.panic_with_error(EscrowError::InvalidStatusTransition);
+            }
         }
 
-        let requested_at_ledger = env.ledger().sequence();
-        let expires_at_ledger = ttl::compute_expiry(&env, PENDING_MIGRATION_TTL_LEDGERS);
+        // 6. Transition to Cancelled state
+        contract.status = ContractStatus::Cancelled;
+        env.storage().persistent().set(&contract_key, &contract);
 
-        let pending = PendingMigration {
-            proposer: proposer.clone(),
-            new_wasm_hash: new_wasm_hash.clone(),
-            requested_at_ledger,
-            expires_at_ledger,
-        };
-
-        ttl::store_with_ttl(&env, &key, &pending, PENDING_MIGRATION_TTL_LEDGERS);
-
+        // 7. Emit indexer-friendly event
         env.events().publish(
-            (symbol_short!("ttl"), symbol_short!("requested")),
-            (
-                symbol_short!("migration"),
-                proposer,
-                new_wasm_hash,
-                requested_at_ledger,
-                expires_at_ledger,
-            ),
+            (Symbol::new(&env, "contract_cancelled"), contract_id),
+            (caller, contract.status, env.ledger().timestamp()),
         );
 
-        pending
+        true
     }
 
-    pub fn confirm_migration(env: Env, confirmer: Address) {
-        confirmer.require_auth();
-
-        let key = DataKey::PendingMigration;
-        let pending: PendingMigration = ttl::read_if_live(&env, &key)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PendingMigrationNotFound));
-
-        ttl::remove_transient(&env, &key);
-
-        env.events().publish(
-            (symbol_short!("ttl"), symbol_short!("confirmed")),
-            (
-                symbol_short!("migration"),
-                confirmer,
-                pending.new_wasm_hash,
-            ),
-        );
-    }
-
-    pub fn cancel_migration(env: Env, proposer: Address) {
-        proposer.require_auth();
-
-        let key = DataKey::PendingMigration;
-        let pending: PendingMigration = ttl::read_if_live(&env, &key)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PendingMigrationNotFound));
-
-        if pending.proposer != proposer {
-            env.panic_with_error(EscrowError::Unauthorized);
+    /// Helper: Calculate total released amount for a contract
+    fn calculate_released_amount(env: &Env, contract_id: u32, contract: &ContractData) -> i128 {
+        let mut released = 0i128;
+        for (idx, amount) in contract.milestones.iter().enumerate() {
+            let milestone_key = DataKey::MilestoneReleased(contract_id, idx as u32);
+            if env
+                .storage()
+                .persistent()
+                .get::<_, bool>(&milestone_key)
+                .unwrap_or(false)
+            {
+                released += amount;
+            }
         }
-
-        ttl::remove_transient(&env, &key);
-
-        env.events().publish(
-            (symbol_short!("ttl"), symbol_short!("cancelled")),
-            (symbol_short!("migration"), proposer),
-        );
-    }
-
-    pub fn get_pending_migration(env: Env) -> Option<PendingMigration> {
-        ttl::read_if_live(&env, &DataKey::PendingMigration)
-    }
-
-    pub fn extend_pending_migration(env: Env, proposer: Address) -> bool {
-        proposer.require_auth();
-
-        let key = DataKey::PendingMigration;
-        ttl::extend_if_below_threshold(
-            &env,
-            &key,
-            PENDING_MIGRATION_BUMP_THRESHOLD,
-            PENDING_MIGRATION_TTL_LEDGERS,
-        )
+        released
     }
 }
 
