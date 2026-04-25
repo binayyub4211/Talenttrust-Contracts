@@ -116,6 +116,8 @@ impl Escrow {
         freelancer: Address,
         arbiter: Option<Address>,
         milestones: Vec<i128>,
+        terms_hash: Option<Bytes>,
+        grace_period_seconds: Option<u64>,
     ) -> u32 {
         client.require_auth();
 
@@ -197,6 +199,16 @@ impl Escrow {
 
         env.storage().persistent().set(&contract_key, &contract);
 
+        true
+    }
+
+    pub fn approve_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
+        // Store approval time using ledger timestamp
+        let approval_time = env.ledger().timestamp();
+        env.storage().persistent().set(
+            &DataKey::MilestoneApprovalTime(contract_id, milestone_index),
+            &approval_time,
+        );
         true
     }
 

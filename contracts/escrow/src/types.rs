@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, String};
+use soroban_sdk::{contracterror, contracttype, Bytes, String};
 
 #[contracttype]
 pub enum DataKey {
@@ -48,3 +48,4 @@ pub struct MilestoneFunding {
     pub milestone_idx: u32,
     pub funded_amount: i128,
 }
+
