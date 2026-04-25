@@ -28,6 +28,8 @@ pub enum ContractStatus {
     Funded = 1,
     Completed = 2,
     Disputed = 3,
+    Cancelled = 4,
+    Refunded = 5,
 }
 
 #[contracttype]
