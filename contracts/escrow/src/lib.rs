@@ -370,3 +370,6 @@ mod test;
 
 #[cfg(test)]
 mod proptest;
+
+#[cfg(test)]
+mod fuzz_test;
