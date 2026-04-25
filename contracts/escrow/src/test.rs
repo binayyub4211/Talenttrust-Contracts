@@ -25,6 +25,8 @@ fn total_milestone_amount() -> i128 {
     200_0000000 + 400_0000000 + 600_0000000
 }
 
+mod ttl_tests;
+
 #[test]
 fn test_hello() {
     let env = Env::default();

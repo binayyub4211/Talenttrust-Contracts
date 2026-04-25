@@ -1,6 +1,16 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
+    Symbol, Vec,
+};
+
+mod ttl;
+
+pub use ttl::{
+    LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS,
+    PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
+};
 
 use types::ContractStatus;
 
@@ -34,6 +44,24 @@ pub struct ContractData {
     pub status: ContractStatus,
     pub total_deposited: i128,
     pub released_amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingApproval {
+    pub approver: Address,
+    pub contract_id: u32,
+    pub requested_at_ledger: u32,
+    pub expires_at_ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingMigration {
+    pub proposer: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub requested_at_ledger: u32,
+    pub expires_at_ledger: u32,
 }
 
 #[contracttype]
