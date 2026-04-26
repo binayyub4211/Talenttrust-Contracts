@@ -78,8 +78,10 @@ pub struct EscrowContractData {
     pub arbiter: Option<Address>,
     pub milestones: Vec<i128>,
     pub status: ContractStatus,
-    pub total_deposited: i128,
+    pub total_amount: i128,
+    pub funded_amount: i128,
     pub released_amount: i128,
+    pub refunded_amount: i128,
     pub approval_expiry_seconds: Option<u64>,
 }
 
@@ -191,8 +193,10 @@ impl Escrow {
             arbiter,
             milestones: milestones.clone(),
             status: ContractStatus::Created,
-            total_deposited: 0,
+            total_amount,
+            funded_amount: 0,
             released_amount: 0,
+            refunded_amount: 0,
             approval_expiry_seconds,
         };
 
@@ -221,7 +225,7 @@ impl Escrow {
             .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        contract.total_deposited += amount;
+        contract.funded_amount += amount;
 
         // Update status to Funded if not already
         if contract.status == ContractStatus::Created {

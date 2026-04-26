@@ -287,7 +287,7 @@ proptest! {
     fn prop_creation_invariants(amounts in milestone_amounts_strategy()) {
         let h = fresh_harness();
         let ms = amounts_sorovec(&h.env, &amounts);
-        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &ms);
+        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &None, &ms, &None, &None, &None);
         prop_assert_eq!(id, 0);
 
         let data = h.client.get_contract(&id);
@@ -313,7 +313,7 @@ proptest! {
         let h = fresh_harness();
         for (expected_id, amounts) in schedules.iter().enumerate() {
             let ms = amounts_sorovec(&h.env, amounts);
-            let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &ms);
+            let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &None, &ms, &None, &None, &None);
             prop_assert_eq!(id, expected_id as u32);
 
             let data = h.client.get_contract(&id);
@@ -333,7 +333,7 @@ proptest! {
     ) {
         let h = fresh_harness();
         let ms = amounts_sorovec(&h.env, &amounts);
-        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &ms);
+        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &None, &ms, &None, &None, &None);
 
         let mut shadow = Shadow::new(&amounts);
         let mut prev_status = shadow.status;
@@ -408,7 +408,7 @@ proptest! {
         let target = target_raw % n;
         let h = fresh_harness();
         let ms = amounts_sorovec(&h.env, &amounts);
-        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &ms);
+        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &None, &ms, &None, &None, &None);
         h.client.deposit_funds(&id, &sum_vec(&amounts));
         h.client.release_milestone(&id, &target);
 
@@ -429,7 +429,7 @@ proptest! {
         let target = target_raw % n;
         let h = fresh_harness();
         let ms = amounts_sorovec(&h.env, &amounts);
-        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &ms);
+        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &None, &ms, &None, &None, &None);
         h.client.deposit_funds(&id, &sum_vec(&amounts));
         h.client.refund_unreleased_milestones(&id, &ids_to_sorovec(&h.env, &[target]));
 
@@ -450,7 +450,7 @@ proptest! {
     ) {
         let h = fresh_harness();
         let ms = amounts_sorovec(&h.env, &amounts);
-        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &ms);
+        let id = h.client.create_contract(&h.client_addr, &h.freelancer_addr, &None, &ms, &None, &None, &None);
 
         for op in &ops {
             let _ = match op {
