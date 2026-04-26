@@ -1,6 +1,4 @@
-use super::{
-    create_contract, default_milestones, generated_participants, register_client, MILESTONE_ONE,
-};
+use super::{create_contract, default_milestones, generated_participants, register_client};
 use crate::EscrowError;
 use soroban_sdk::{vec, Env, Vec};
 
@@ -11,7 +9,8 @@ fn create_rejects_same_participants() {
     let client = register_client(&env);
     let (addr, _) = generated_participants(&env);
 
-    let result = client.try_create_contract(&addr, &addr, &None, &default_milestones(&env), &None, &None);
+    let result =
+        client.try_create_contract(&addr, &addr, &None, &default_milestones(&env), &None, &None);
     super::assert_contract_error(result, EscrowError::InvalidParticipant);
 }
 
@@ -23,7 +22,8 @@ fn create_rejects_empty_milestone_list() {
     let (client_addr, freelancer_addr) = generated_participants(&env);
     let empty = Vec::<i128>::new(&env);
 
-    let result = client.try_create_contract(&client_addr, &freelancer_addr, &None, &empty, &None, &None);
+    let result =
+        client.try_create_contract(&client_addr, &freelancer_addr, &None, &empty, &None, &None);
     super::assert_contract_error(result, EscrowError::EmptyMilestones);
 }
 
@@ -35,7 +35,14 @@ fn create_rejects_non_positive_milestone_amount() {
     let (client_addr, freelancer_addr) = generated_participants(&env);
     let milestones = vec![&env, 100_i128, 0_i128];
 
-    let result = client.try_create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    let result = client.try_create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &None,
+        &None,
+    );
     super::assert_contract_error(result, EscrowError::InvalidMilestoneAmount);
 }
 
@@ -46,7 +53,14 @@ fn create_requires_client_authorization() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr) = generated_participants(&env);
 
-    let _ = client.create_contract(&client_addr, &freelancer_addr, &None, &default_milestones(&env), &None, &None);
+    let _ = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &default_milestones(&env),
+        &None,
+        &None,
+    );
 }
 
 #[test]

@@ -14,14 +14,14 @@ fn contract_state_round_trips_across_lifecycle_mutations() {
     assert_eq!(created.freelancer, freelancer_addr);
     assert_eq!(created.status, ContractStatus::Created);
 
-    assert!(client.deposit_funds(&contract_id, &1_000_0000000_i128));
+    assert!(client.deposit_funds(&contract_id, &10_000_000_000_i128));
     let funded = client.get_contract(&contract_id);
     assert_eq!(funded.status, ContractStatus::Funded);
-    assert_eq!(funded.funded_amount, 1_000_0000000_i128);
+    assert_eq!(funded.funded_amount, 10_000_000_000_i128);
 
     assert!(client.deposit_funds(
         &contract_id,
-        &(total_milestone_amount() - 1_000_0000000_i128),
+        &(total_milestone_amount() - 10_000_000_000_i128),
     ));
     assert!(client.release_milestone(&contract_id, &0));
 
@@ -59,6 +59,13 @@ fn try_get_contract_reports_missing_state_without_mutating_storage() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 10_i128];
-    let created = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    let created = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &None,
+        &None,
+    );
     assert_eq!(created, 0);
 }

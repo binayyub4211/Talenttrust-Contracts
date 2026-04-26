@@ -43,10 +43,6 @@ fn total_milestone_amount() -> i128 {
     200_0000000 + 400_0000000 + 600_0000000
 }
 
-fn total_milestones() -> i128 {
-    total_milestone_amount()
-}
-
 const MILESTONE_ONE: i128 = 200_0000000;
 
 fn default_milestones(env: &Env) -> Vec<i128> {
@@ -60,10 +56,6 @@ fn default_milestones(env: &Env) -> Vec<i128> {
 
 fn generated_participants(env: &Env) -> (Address, Address) {
     (Address::generate(env), Address::generate(env))
-}
-
-fn world_symbol() -> soroban_sdk::Symbol {
-    symbol_short!("World")
 }
 
 fn complete_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, u32) {
@@ -84,7 +76,10 @@ fn assert_contract_error<T, E>(
 {
     match result {
         Err(Ok(err)) => {
-            assert_eq!(err, soroban_sdk::Error::from_contract_error(expected as u32));
+            assert_eq!(
+                err,
+                soroban_sdk::Error::from_contract_error(expected as u32)
+            );
         }
         _ => panic!("Expected contract error {:?}, got {:?}", expected, result),
     }

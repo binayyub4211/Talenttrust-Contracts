@@ -408,7 +408,7 @@ impl Escrow {
 
         // Comment validation
         if let Some(ref c) = comment {
-            if c.len() == 0 {
+            if c.is_empty() {
                 env.panic_with_error(EscrowError::EmptyComment);
             }
             if c.len() > 1000 {

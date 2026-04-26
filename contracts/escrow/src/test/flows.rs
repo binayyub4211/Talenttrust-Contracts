@@ -1,9 +1,6 @@
-use super::{
-    complete_contract, create_contract, default_milestones, register_client,
-    total_milestone_amount,
-};
-use crate::{ContractStatus, EscrowError};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use super::{complete_contract, default_milestones, register_client, total_milestone_amount};
+use crate::EscrowError;
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn multiple_contracts_for_same_freelancer() {
@@ -16,8 +13,15 @@ fn multiple_contracts_for_same_freelancer() {
 
     let client_addr = Address::generate(&env);
     let milestones = default_milestones(&env);
-    let second_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
-    
+    let second_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &None,
+        &None,
+    );
+
     assert!(client.deposit_funds(&second_id, &total_milestone_amount()));
     assert!(client.release_milestone(&second_id, &0));
     assert!(client.release_milestone(&second_id, &1));
