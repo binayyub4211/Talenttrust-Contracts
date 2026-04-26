@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
     Symbol, Vec,
 };
 
@@ -12,9 +12,10 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
-use types::ContractStatus;
-
 mod types;
+use types::ContractStatus;
+pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
+use crate::types::DataKey as ReadinessDataKey;
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 //
@@ -41,9 +42,12 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 1
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
 
-mod types;
-pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
-use crate::types::DataKey as ReadinessDataKey;
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowBounds {
+    pub max_milestones: u32,
+    pub max_total_escrow_stroops: i128,
+}
 
 #[contract]
 pub struct Escrow;
@@ -62,6 +66,8 @@ pub enum EscrowError {
     AlreadyCancelled = 8,
     ContractNotFound = 9,
     MilestonesAlreadyReleased = 10,
+    TooManyMilestones = 11,
+    ApprovalExpired = 12,
 }
 
 #[contracttype]
@@ -74,6 +80,7 @@ pub struct EscrowContractData {
     pub status: ContractStatus,
     pub total_deposited: i128,
     pub released_amount: i128,
+    pub approval_expiry_seconds: Option<u64>,
 }
 
 #[contracttype]
@@ -98,7 +105,10 @@ pub struct PendingMigration {
 #[derive(Clone)]
 enum DataKey {
     Contract(u32),
+    ContractCount,
+    Milestones(u32),
     MilestoneReleased(u32, u32),
+    MilestoneApprovalTime(u32, u32),
     RefundableBalance(u32),
 }
 
@@ -140,6 +150,7 @@ impl Escrow {
         milestones: Vec<i128>,
         terms_hash: Option<Bytes>,
         grace_period_seconds: Option<u64>,
+        approval_expiry_seconds: Option<u64>,
     ) -> u32 {
         client.require_auth();
 
@@ -147,7 +158,6 @@ impl Escrow {
             env.panic_with_error(EscrowError::InvalidParticipant);
         }
 
-        // Validate arbiter doesn't overlap with client/freelancer
         if let Some(ref a) = arbiter {
             if *a == client || *a == freelancer {
                 env.panic_with_error(EscrowError::InvalidParticipant);
@@ -162,17 +172,11 @@ impl Escrow {
         }
 
         let mut total_amount: i128 = 0;
-        let mut milestones: Vec<Milestone> = Vec::new(&env);
-        for amount in milestone_amounts.iter() {
+        for amount in milestones.iter() {
             if amount <= 0 {
                 env.panic_with_error(EscrowError::InvalidMilestoneAmount);
             }
             total_amount += amount;
-            milestones.push_back(Milestone {
-                amount,
-                released: false,
-                refunded: false,
-            });
         }
 
         let id: u32 = env
@@ -185,10 +189,11 @@ impl Escrow {
             client,
             freelancer,
             arbiter,
-            milestones,
+            milestones: milestones.clone(),
             status: ContractStatus::Created,
             total_deposited: 0,
             released_amount: 0,
+            approval_expiry_seconds,
         };
 
         env.storage().persistent().set(&DataKey::Contract(id), &data);
@@ -209,7 +214,7 @@ impl Escrow {
         let mut contract = env
             .storage()
             .persistent()
-            .get::<_, ContractData>(&contract_key)
+            .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
         contract.total_deposited += amount;
@@ -239,8 +244,22 @@ impl Escrow {
         let mut contract = env
             .storage()
             .persistent()
-            .get::<_, ContractData>(&contract_key)
+            .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Validate approval expiry if window is set
+        if let Some(expiry_window) = contract.approval_expiry_seconds {
+            let approval_key = DataKey::MilestoneApprovalTime(contract_id, milestone_index);
+            let approval_time = env
+                .storage()
+                .persistent()
+                .get::<_, u64>(&approval_key)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::UnauthorizedRole)); 
+
+            if env.ledger().timestamp() > approval_time + expiry_window {
+                env.panic_with_error(EscrowError::ApprovalExpired);
+            }
+        }
 
         // Mark this milestone as released
         let milestone_key = DataKey::MilestoneReleased(contract_id, milestone_index);
@@ -257,10 +276,10 @@ impl Escrow {
     }
 
     /// Get contract details
-    pub fn get_contract(env: Env, contract_id: u32) -> ContractData {
+    pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
         env.storage()
             .persistent()
-            .get::<_, ContractData>(&DataKey::Contract(contract_id))
+            .get::<_, EscrowContractData>(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
     }
 
@@ -280,7 +299,7 @@ impl Escrow {
         let mut contract = env
             .storage()
             .persistent()
-            .get::<_, ContractData>(&contract_key)
+            .get::<_, EscrowContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
         // 3. Check if already cancelled (idempotency guard)
@@ -348,7 +367,7 @@ impl Escrow {
     }
 
     /// Helper: Calculate total released amount for a contract
-    fn calculate_released_amount(env: &Env, contract_id: u32, contract: &ContractData) -> i128 {
+    fn calculate_released_amount(env: &Env, contract_id: u32, contract: &EscrowContractData) -> i128 {
         let mut released = 0i128;
         for (idx, amount) in contract.milestones.iter().enumerate() {
             let milestone_key = DataKey::MilestoneReleased(contract_id, idx as u32);
@@ -370,3 +389,6 @@ mod test;
 
 #[cfg(test)]
 mod proptest;
+
+#[cfg(test)]
+mod test_approval_expiry;
