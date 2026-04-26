@@ -1,10 +1,14 @@
 #![cfg(test)]
 
 mod cancel_contract;
+mod flows;
+mod lifecycle;
+mod persistence;
+mod security;
 
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{ContractStatus, Escrow, EscrowClient};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError};
 
 mod performance;
 
@@ -37,6 +41,53 @@ fn create_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, u
 
 fn total_milestone_amount() -> i128 {
     200_0000000 + 400_0000000 + 600_0000000
+}
+
+fn total_milestones() -> i128 {
+    total_milestone_amount()
+}
+
+const MILESTONE_ONE: i128 = 200_0000000;
+
+fn default_milestones(env: &Env) -> Vec<i128> {
+    vec![
+        env,
+        2_000_000_000_i128,
+        4_000_000_000_i128,
+        6_000_000_000_i128,
+    ]
+}
+
+fn generated_participants(env: &Env) -> (Address, Address) {
+    (Address::generate(env), Address::generate(env))
+}
+
+fn world_symbol() -> soroban_sdk::Symbol {
+    symbol_short!("World")
+}
+
+fn complete_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address, u32) {
+    let (client_addr, freelancer_addr, contract_id) = create_contract(env, client);
+    client.deposit_funds(&contract_id, &total_milestone_amount());
+    client.release_milestone(&contract_id, &0);
+    client.release_milestone(&contract_id, &1);
+    client.release_milestone(&contract_id, &2);
+    (client_addr, freelancer_addr, contract_id)
+}
+
+fn assert_contract_error<T, E>(
+    result: Result<Result<T, E>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+    expected: EscrowError,
+) where
+    T: core::fmt::Debug,
+    E: core::fmt::Debug,
+{
+    match result {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(expected as u32));
+        }
+        _ => panic!("Expected contract error {:?}, got {:?}", expected, result),
+    }
 }
 
 mod ttl_tests;

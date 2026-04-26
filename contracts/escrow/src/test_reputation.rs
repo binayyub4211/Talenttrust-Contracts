@@ -19,8 +19,100 @@ fn test_reputation_valid() {
     client.deposit_funds(&escrow_id, &200_0000000_i128);
     client.release_milestone(&escrow_id, &0); // sets status to Completed
 
-    let res = client.issue_reputation(&escrow_id, &5);
+    let res = client.issue_reputation(&escrow_id, &5, &None);
     assert_eq!(res, true);
+}
+
+#[test]
+fn test_reputation_with_comment() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128];
+
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    client.deposit_funds(&escrow_id, &200_0000000_i128);
+    client.release_milestone(&escrow_id, &0);
+
+    let comment = soroban_sdk::String::from_str(&env, "Excellent work!");
+    let res = client.issue_reputation(&escrow_id, &5, &Some(comment));
+    assert_eq!(res, true);
+}
+
+#[test]
+fn test_reputation_self_rating_prevented_at_creation() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let user_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128];
+
+    env.mock_all_auths();
+    // Same address for client and freelancer should fail at creation
+    let res = client.try_create_contract(&user_addr, &user_addr, &None, &milestones, &None, &None);
+    match res {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::InvalidParticipant as u32));
+        }
+        _ => panic!("Expected invalid participant error, got {:?}", res),
+    }
+}
+
+#[test]
+fn test_reputation_comment_too_long() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128];
+
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    client.deposit_funds(&escrow_id, &200_0000000_i128);
+    client.release_milestone(&escrow_id, &0);
+
+    // Create a very long comment (> 1000 chars)
+    let long_str = "a".repeat(1001);
+    let comment = soroban_sdk::String::from_str(&env, &long_str);
+    let res = client.try_issue_reputation(&escrow_id, &5, &Some(comment));
+    match res {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::CommentTooLong as u32));
+        }
+        _ => panic!("Expected comment too long error, got {:?}", res),
+    }
+}
+
+#[test]
+fn test_reputation_empty_comment_fails() {
+    let env = Env::default();
+    let contract_id = env.register(Escrow, ());
+    let client = EscrowClient::new(&env, &contract_id);
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = vec![&env, 200_0000000_i128];
+
+    env.mock_all_auths();
+    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    client.deposit_funds(&escrow_id, &200_0000000_i128);
+    client.release_milestone(&escrow_id, &0);
+
+    let comment = soroban_sdk::String::from_str(&env, "");
+    let res = client.try_issue_reputation(&escrow_id, &5, &Some(comment));
+    match res {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::EmptyComment as u32));
+        }
+        _ => panic!("Expected empty comment error, got {:?}", res),
+    }
 }
 
 #[test]
@@ -39,12 +131,22 @@ fn test_reputation_invalid_rating() {
     client.release_milestone(&escrow_id, &0); // triggers Completion
 
     // Try issuing with a 0 rating
-    let res_low = client.try_issue_reputation(&escrow_id, &0);
-    assert_eq!(res_low, Err(Ok(EscrowError::InvalidRating)));
+    let res_low = client.try_issue_reputation(&escrow_id, &0, &None);
+    match res_low {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::InvalidRating as u32));
+        }
+        _ => panic!("Expected invalid rating error, got {:?}", res_low),
+    }
 
     // Try issuing with a > 5 rating
-    let res_high = client.try_issue_reputation(&escrow_id, &6);
-    assert_eq!(res_high, Err(Ok(EscrowError::InvalidRating)));
+    let res_high = client.try_issue_reputation(&escrow_id, &6, &None);
+    match res_high {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::InvalidRating as u32));
+        }
+        _ => panic!("Expected invalid rating error, got {:?}", res_high),
+    }
 }
 
 #[test]
@@ -61,8 +163,13 @@ fn test_reputation_timing_fail() {
     let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     // Not releasing any milestone here, so contract status is Created or Funded
 
-    let res = client.try_issue_reputation(&escrow_id, &5);
-    assert_eq!(res, Err(Ok(EscrowError::NotCompleted)));
+    let res = client.try_issue_reputation(&escrow_id, &5, &None);
+    match res {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::NotCompleted as u32));
+        }
+        _ => panic!("Expected not completed error, got {:?}", res),
+    }
 }
 
 #[test]
@@ -81,10 +188,15 @@ fn test_reputation_duplicate() {
     client.release_milestone(&escrow_id, &0);
 
     // Initial valid issue
-    let res = client.issue_reputation(&escrow_id, &5);
+    let res = client.issue_reputation(&escrow_id, &5, &None);
     assert!(res);
 
     // Secondly issuing -> duplicate error expected
-    let res2 = client.try_issue_reputation(&escrow_id, &4);
-    assert_eq!(res2, Err(Ok(EscrowError::DuplicateRating)));
+    let res2 = client.try_issue_reputation(&escrow_id, &4, &None);
+    match res2 {
+        Err(Ok(err)) => {
+            assert_eq!(err, soroban_sdk::Error::from_contract_error(EscrowError::DuplicateRating as u32));
+        }
+        _ => panic!("Expected duplicate rating error, got {:?}", res2),
+    }
 }

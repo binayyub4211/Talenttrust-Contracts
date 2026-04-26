@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, symbol_short, vec, Address, Bytes, BytesN, Env, Symbol, Vec,
+    contract, contractimpl, symbol_short, vec, Address, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
 mod ttl;
@@ -14,7 +14,7 @@ pub use ttl::{
 mod types;
 pub use crate::types::{
     ContractStatus, DataKey, EscrowBounds, EscrowContractData, EscrowError, MainnetReadinessInfo,
-    Milestone, ReadinessChecklist, ReputationRecord,
+    Milestone, ReadinessChecklist, ReputationEntry, ReputationRecord,
 };
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
@@ -98,6 +98,7 @@ impl Escrow {
             released_amount: 0,
             refunded_amount: 0,
             finalized: false,
+            reputation_issued: false,
             terms_hash: _terms_hash,
             grace_period_seconds: _grace_period_seconds,
         };
@@ -380,9 +381,20 @@ impl Escrow {
         leftover
     }
 
-    pub fn issue_reputation(env: Env, contract_id: u32, rating: u32) -> bool {
+    pub fn issue_reputation(
+        env: Env,
+        contract_id: u32,
+        rating: u32,
+        comment: Option<String>,
+    ) -> bool {
         let contract = Self::get_contract(env.clone(), contract_id);
-        contract.client.require_auth();
+        let reviewer = contract.client.clone();
+        reviewer.require_auth();
+
+        // Anti-abuse: prevent self-rating
+        if reviewer == contract.freelancer {
+            env.panic_with_error(EscrowError::SelfRating);
+        }
 
         if contract.status != ContractStatus::Completed
             && contract.status != ContractStatus::Refunded
@@ -392,6 +404,16 @@ impl Escrow {
 
         if !(1..=5).contains(&rating) {
             env.panic_with_error(EscrowError::InvalidRating);
+        }
+
+        // Comment validation
+        if let Some(ref c) = comment {
+            if c.len() == 0 {
+                env.panic_with_error(EscrowError::EmptyComment);
+            }
+            if c.len() > 1000 {
+                env.panic_with_error(EscrowError::CommentTooLong);
+            }
         }
 
         if env.storage().persistent().has(&DataKey::Reputation(
@@ -435,14 +457,30 @@ impl Escrow {
             &DataKey::ReputationRecord(contract.freelancer.clone()),
             &record,
         );
+
+        let entry = ReputationEntry {
+            rating,
+            comment: comment.clone(),
+            reviewer: reviewer.clone(),
+            target: contract.freelancer.clone(),
+            context_id: contract_id,
+            timestamp: env.ledger().timestamp(),
+        };
+
         env.storage().persistent().set(
             &DataKey::Reputation(contract_id, contract.freelancer.clone()),
-            &rating,
+            &entry,
         );
+
+        let mut updated_contract = contract;
+        updated_contract.reputation_issued = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &updated_contract);
 
         env.events().publish(
             (symbol_short!("rated"), contract_id),
-            (contract.freelancer, rating),
+            (reviewer, updated_contract.freelancer, rating, comment),
         );
 
         true
@@ -455,10 +493,20 @@ impl Escrow {
             .unwrap_or(0)
     }
 
-    pub fn get_reputation(env: Env, freelancer: Address) -> Option<ReputationRecord> {
+    pub fn get_reputation(env: Env, freelancer: Address) -> ReputationRecord {
         env.storage()
             .persistent()
             .get(&DataKey::ReputationRecord(freelancer))
+            .unwrap_or(ReputationRecord {
+                completed_contracts: 0,
+                total_rating: 0,
+                last_rating: 0,
+                ratings_count: 0,
+            })
+    }
+
+    pub fn get_reputation_record(env: Env, freelancer: Address) -> ReputationRecord {
+        Self::get_reputation(env, freelancer)
     }
 
     pub fn get_contract(env: Env, contract_id: u32) -> EscrowContractData {
@@ -537,6 +585,30 @@ impl Escrow {
     pub fn get_refundable_balance(env: Env, contract_id: u32) -> i128 {
         let contract = Self::get_contract(env.clone(), contract_id);
         contract.funded_amount - contract.released_amount - contract.refunded_amount
+    }
+
+    pub fn refund_remaining_funds(env: Env, contract_id: u32) -> bool {
+        let mut contract = Self::get_contract(env.clone(), contract_id);
+        contract.client.require_auth();
+
+        let amount = contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        if amount <= 0 {
+            return false;
+        }
+
+        // Simplistic refund of all remaining funds to client
+        contract.refunded_amount += amount;
+        contract.status = ContractStatus::Refunded;
+        contract.finalized = true;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        env.events()
+            .publish((symbol_short!("refunded"), contract_id), amount);
+
+        true
     }
 
     pub fn dispute_contract(env: Env, contract_id: u32, caller: Address) -> bool {
@@ -726,3 +798,5 @@ impl Escrow {
 mod proptest;
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_reputation;

@@ -39,6 +39,16 @@ pub enum EscrowError {
     NotReadyForFinalization = 16,
     AlreadyReleased = 17,
     InsufficientFunds = 18,
+    SelfRating = 19,
+    CommentTooLong = 20,
+    EmptyComment = 21,
+    AmountMustBePositive = 22,
+    FundingExceedsRequired = 23,
+    InvalidState = 24,
+    InsufficientEscrowBalance = 25,
+    MilestoneNotFound = 26,
+    AlreadyApproved = 27,
+    ReputationAlreadyIssued = 28,
 }
 
 #[contracttype]
@@ -74,6 +84,7 @@ pub struct EscrowContractData {
     pub released_amount: i128,
     pub refunded_amount: i128,
     pub finalized: bool,
+    pub reputation_issued: bool,
     pub terms_hash: Option<Bytes>,
     pub grace_period_seconds: Option<u64>,
 }
@@ -85,6 +96,17 @@ pub struct ReputationRecord {
     pub total_rating: u32,
     pub last_rating: u32,
     pub ratings_count: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReputationEntry {
+    pub rating: u32,
+    pub comment: Option<soroban_sdk::String>,
+    pub reviewer: Address,
+    pub target: Address,
+    pub context_id: u32,
+    pub timestamp: u64,
 }
 
 #[contracttype]
