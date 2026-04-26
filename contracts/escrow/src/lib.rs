@@ -41,8 +41,6 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 1
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
 
-
-
 #[contract]
 pub struct Escrow;
 
@@ -114,8 +112,6 @@ enum DataKey {
     MilestoneApprovalTime(u32, u32),
 }
 
-
-
 #[contractimpl]
 impl Escrow {
     pub fn hello(_env: Env, to: Symbol) -> Symbol {
@@ -186,11 +182,15 @@ impl Escrow {
             deposit_mode,
         };
 
-        env.storage().persistent().set(&DataKey::Contract(id), &data);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(id), &data);
         env.storage()
             .persistent()
             .set(&DataKey::Milestones(id), &milestones);
-        env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractCount, &(id + 1));
 
         id
     }
@@ -359,7 +359,11 @@ impl Escrow {
     }
 
     /// Helper: Calculate total released amount for a contract
-    fn calculate_released_amount(env: &Env, contract_id: u32, contract: &EscrowContractData) -> i128 {
+    fn calculate_released_amount(
+        env: &Env,
+        contract_id: u32,
+        contract: &EscrowContractData,
+    ) -> i128 {
         let mut released = 0i128;
         for (idx, amount) in contract.milestones.iter().enumerate() {
             let milestone_key = DataKey::MilestoneReleased(contract_id, idx as u32);

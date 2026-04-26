@@ -50,7 +50,6 @@ pub struct MilestoneFunding {
     pub funded_amount: i128,
 }
 
-
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DepositMode {
