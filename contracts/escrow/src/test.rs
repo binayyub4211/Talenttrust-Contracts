@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 mod cancel_contract;
+mod summary;
 
 use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
@@ -17,7 +18,7 @@ fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) 
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     (client_addr, freelancer_addr, contract_id)
 }
 
@@ -47,7 +48,7 @@ fn test_create_contract() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert_eq!(id, 0);
 
     // Verify contract was created with correct status
@@ -65,7 +66,7 @@ fn test_deposit_funds() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
 
     // Now deposit
     let result = client.deposit_funds(&id, &1_000_0000000);
@@ -82,7 +83,7 @@ fn test_release_milestone() {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     client.deposit_funds(&id, &1_000_0000000);
 
     // Now release milestone
@@ -100,7 +101,7 @@ fn test_withdraw_leftover_success() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128]; // Total: 600
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr)); // Deposit: 1000
     assert!(client.release_milestone(&contract_id, &0, &client_addr)); // Release: 200
     assert!(client.finalize_contract(&contract_id, &client_addr));
@@ -121,7 +122,7 @@ fn test_withdraw_leftover_before_finalization() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
     assert!(client.release_milestone(&contract_id, &0, &client_addr));
 
@@ -141,7 +142,7 @@ fn test_withdraw_leftover_unauthorized() {
     let unauthorized_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
     assert!(client.release_milestone(&contract_id, &0, &client_addr));
     assert!(client.finalize_contract(&contract_id, &client_addr));
@@ -161,7 +162,7 @@ fn test_withdraw_leftover_no_funds() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128]; // Total: 600
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert!(client.deposit_funds(&contract_id, &600_0000000, &client_addr)); // Deposit exactly 600
     assert!(client.release_milestone(&contract_id, &0, &client_addr)); // Release: 200
     assert!(client.release_milestone(&contract_id, &1, &client_addr)); // Release: 400
@@ -182,7 +183,7 @@ fn test_withdraw_leftover_double_withdraw() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128];
 
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
     assert!(client.deposit_funds(&contract_id, &1_000_0000000, &client_addr));
     assert!(client.release_milestone(&contract_id, &0, &client_addr));
     assert!(client.finalize_contract(&contract_id, &client_addr));
