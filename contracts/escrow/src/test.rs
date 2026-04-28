@@ -16,7 +16,7 @@ fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) 
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorizationMode::ClientOnly, &None, &None);
     (client_addr, freelancer_addr, contract_id)
 }
 
@@ -45,7 +45,7 @@ fn test_create_contract() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &ReleaseAuthorizationMode::ClientOnly, &None, &None);
     assert_eq!(id, 0);
 
     let contract = client.get_contract(&id);
