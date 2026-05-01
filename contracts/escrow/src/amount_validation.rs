@@ -273,6 +273,7 @@ mod tests {
 
         // Safe subtraction
         assert_eq!(safe_subtract_amounts(300, 100), Some(200));
-        assert_eq!(safe_subtract_amounts(0, 1), None);
+        assert_eq!(safe_subtract_amounts(0, 1), Some(-1));
+        assert_eq!(safe_subtract_amounts(i128::MIN, 1), None);
     }
 }

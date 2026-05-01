@@ -379,11 +379,8 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        let mut total_milestones: i128 = 0;
-        for amt in contract.milestones.iter() {
-            total_milestones = safe_add_amounts(total_milestones, amt)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-        }
+        contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
         if contract.deposit_mode == DepositMode::ExactTotal {
             if amount != total_milestones || contract.total_deposited > 0 {
