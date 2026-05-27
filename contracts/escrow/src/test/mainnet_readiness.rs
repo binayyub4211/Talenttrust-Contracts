@@ -81,7 +81,9 @@ fn initialize_protocol_governance_sets_governed_params() {
 fn update_protocol_parameters_sets_governed_params() {
     let (env, contract_id) = setup();
     let client = EscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
 
+    client.initialize_governance(&admin);
     client.update_protocol_parameters(&50_i128, &8_u32, &1_i128, &5_i128);
 
     let info = client.get_mainnet_readiness_info();

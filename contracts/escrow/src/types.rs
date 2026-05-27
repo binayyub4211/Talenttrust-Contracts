@@ -20,6 +20,9 @@ pub enum DataKey {
     // Client migration
     PendingClientMigration(u32),
     // Protocol / governance
+    GovernanceAdmin,
+    PendingGovernanceAdmin,
+    ProtocolParameters,
     ProtocolFeeBps,
     AccumulatedProtocolFees,
     ReadinessChecklist,
@@ -62,9 +65,11 @@ pub enum EscrowError {
     EmergencyActive = 30,
     NotInitialized = 31,
     AlreadyInitialized = 32,
+    InvalidProtocolParameters = 33,
+    GovernanceNotInitialized = 34,
     // Additional errors referenced in tests
-    FreelancerMismatch = 33,
-    EmptyRefundRequest = 34,
+    FreelancerMismatch = 35,
+    EmptyRefundRequest = 36,
     DuplicateMilestoneInRefund = 35,
     PotentialOverflow = 36,
     NonPositiveAmount = 37,
@@ -120,6 +125,26 @@ impl Default for ReadinessChecklist {
             initialized: false,
             governed_params_set: false,
             emergency_controls_enabled: false,
+        }
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolParameters {
+    pub min_milestone_amount: i128,
+    pub max_milestones: u32,
+    pub min_reputation_rating: i128,
+    pub max_reputation_rating: i128,
+}
+
+impl Default for ProtocolParameters {
+    fn default() -> Self {
+        ProtocolParameters {
+            min_milestone_amount: 1,
+            max_milestones: 16,
+            min_reputation_rating: 1,
+            max_reputation_rating: 5,
         }
     }
 }

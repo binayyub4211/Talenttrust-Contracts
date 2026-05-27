@@ -135,6 +135,7 @@ client.update_protocol_parameters(&100_i128, &16_u32, &1_i128, &5_i128);
 - Can be called multiple times (overwrites pending admin)
 - Does not immediately transfer control
 - Pending admin can be queried via `get_pending_governance_admin()`
+- Overwrites any existing pending admin when re-proposed
 
 **Usage**:
 ```rust
@@ -149,6 +150,7 @@ client.propose_governance_admin(&new_admin);
 **Security Properties**:
 - Requires pending admin authentication
 - Completes the transfer atomically
+- Current admin retains control until acceptance
 - Clears pending admin state
 - New admin immediately has full control
 
