@@ -653,7 +653,42 @@ impl Escrow {
         true
     }
 
-    /// Cancel an escrow contract. Blocked when paused.
+    /// Cancel an escrow contract with strict state guardrails.
+    ///
+    /// # Allowed source states
+    /// Only contracts in the following states can be cancelled:
+    /// - `Created`: Before any funding has occurred.
+    /// - `PartiallyFunded`: Some funds have been deposited but not all required funds.
+    /// - `Funded`: All required funds are deposited but no milestones have been released.
+    ///
+    /// # Blocked states
+    /// Cancellation is rejected (with `InvalidStatusTransition`) from:
+    /// - `Disputed`: Active dispute requires arbiter resolution.
+    /// - `Refunded`: Contract already refunded; refunds cannot be double-resolved.
+    /// - `Completed`: Contract execution complete; no state changes allowed.
+    /// - `Cancelled`: Already cancelled (returns `AlreadyCancelled`).
+    ///
+    /// # Security properties
+    /// - **Invariant**: `cancel_contract` is a no-op-or-error from any terminal or in-resolution state.
+    /// - **Authorization**: Only the client or freelancer may cancel. Arbiter cannot initiate cancellation.
+    /// - **Accounting**: Enforces `check_accounting_invariant` to detect fund stranding or loss.
+    /// - **Events**: Emits cancellation audit event for recovery and forensics.
+    ///
+    /// # Parameters
+    /// - `env`: The Soroban environment.
+    /// - `contract_id`: The contract identifier.
+    /// - `caller`: The address requesting cancellation (must be client or freelancer).
+    ///
+    /// # Errors
+    /// - `ContractNotFound`: If contract_id does not exist.
+    /// - `AlreadyCancelled`: If contract is already in `Cancelled` state.
+    /// - `InvalidStatusTransition`: If contract is in `Disputed`, `Refunded`, or `Completed` state.
+    /// - `UnauthorizedRole`: If caller is not client or freelancer.
+    /// - `ContractPaused`: If pause or emergency controls are active.
+    /// - `AccountingInvariantViolated`: If accounting checks fail (e.g., fund loss detected).
+    ///
+    /// # Returns
+    /// `true` on successful cancellation.
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
         Self::require_not_paused(&env);
         caller.require_auth();
@@ -665,12 +700,24 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
+        // ─── State guardrails: reject from terminal or in-resolution states ──────
+
         if contract.status == ContractStatus::Cancelled {
             env.panic_with_error(EscrowError::AlreadyCancelled);
         }
+
+        // Reject from terminal/in-resolution states that cannot transition to Cancelled
         if contract.status == ContractStatus::Completed {
             env.panic_with_error(EscrowError::InvalidStatusTransition);
         }
+        if contract.status == ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+        if contract.status == ContractStatus::Refunded {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        // ─── Authorization: client or freelancer only ────────────────────────────
 
         let is_client = caller == contract.client;
         let is_freelancer = caller == contract.freelancer;
