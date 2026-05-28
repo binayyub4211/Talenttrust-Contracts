@@ -8,7 +8,193 @@ The test suite comprehensively covers:
 - **Edge cases:** boundary conditions, idempotency, isolation.
 - **Authorization:** access control and auth requirements.
 
-Tests are located in [`contracts/escrow/src/test.rs`](../../contracts/escrow/src/test.rs).
+Tests are located in:
+- Main test module: [`contracts/escrow/src/test.rs`](../../contracts/escrow/src/test.rs)
+- Test suites: [`contracts/escrow/src/test/`](../../contracts/escrow/src/test/)
+
+## Test Organization
+
+The test suite is organized into modular test files under `contracts/escrow/src/test/`:
+
+### Core Functionality Tests
+- **`deposit.rs`** - Deposit fund accumulation, state transitions, and validation
+- **`release.rs`** - Milestone release flows, authorization, and double-spending prevention
+- **`refund.rs`** - Refund logic, balance tracking, and state transitions
+- **`create_contract.rs`** - Contract creation, milestone validation, and participant checks
+
+### Security & Access Control Tests
+- **`access_control.rs`** - Role-based authorization checks
+- **`security.rs`** - Security-critical operations and attack prevention
+- **`approval_expiry.rs`** - Approval TTL expiry and fail-closed behavior
+- **`emergency_controls.rs`** - Emergency pause and recovery mechanisms
+- **`pause_controls.rs`** - Contract pause/unpause functionality
+
+### State Management Tests
+- **`lifecycle.rs`** - Full contract lifecycle state transitions
+- **`flows.rs`** - End-to-end workflow scenarios
+- **`persistence.rs`** - Storage persistence and data integrity
+- **`storage.rs`** - Storage TTL and data eviction
+
+### Input Validation Tests
+- **`input_sanitization_amounts.rs`** - Amount validation and overflow prevention
+- **`input_sanitization_identities.rs`** - Address validation and participant checks
+
+### Advanced Features Tests
+- **`milestone_schedule.rs`** - Milestone scheduling and sequencing
+- **`governance.rs`** - Governance and arbiter functionality
+- **`timeout_tests.rs`** - Timeout handling and expiry
+- **`client_migration.rs`** - Client address migration
+- **`performance.rs`** - Performance benchmarks and gas optimization
+- **`mainnet_readiness.rs`** - Production readiness checks
+
+### Basic Tests
+- **`hello.rs`** - Smoke tests and connectivity checks
+
+## Migrated Test Suites (v0.3.0)
+
+The following test suites were previously orphaned at the crate root and have been migrated to `contracts/escrow/src/test/` with updated signatures to match the current EscrowClient API:
+
+### Deposit Tests (`test/deposit.rs`)
+
+#### `accumulates_deposits_without_exceeding_total`
+- **Purpose:** Validates that deposits accumulate correctly and transition to Funded status when fully funded.
+- **Setup:** Create contract with 1,200 stroops total, deposit 600 twice.
+- **Assertions:** First deposit keeps status as Created; second deposit transitions to Funded.
+- **Security:** Validates state transition logic and funded_amount tracking accuracy.
+
+#### `rejects_zero_deposit`
+- **Purpose:** Ensures zero-amount deposits are rejected.
+- **Setup:** Attempt to deposit 0 stroops.
+- **Assertion:** Panics with AmountMustBePositive error.
+- **Security:** Prevents dust attacks and invalid state transitions.
+
+#### `rejects_overfunding`
+- **Purpose:** Prevents deposits exceeding total milestone amount.
+- **Setup:** Attempt to deposit 1,300 stroops when total is 1,200.
+- **Assertion:** Panics (overfunding prevention).
+- **Security:** Ensures contract accounting integrity.
+
+#### `rejects_deposit_after_full_refund_resolution`
+- **Purpose:** Validates fail-closed state machine after refund.
+- **Setup:** Deposit funds, refund all milestones, attempt another deposit.
+- **Assertion:** Panics with InvalidState error.
+- **Security:** Prevents re-funding of resolved contracts.
+
+### Release Tests (`test/release.rs`)
+
+#### `releases_funded_milestones_and_completes_when_all_are_released`
+- **Purpose:** Validates sequential milestone release and completion transition.
+- **Setup:** Fund contract, approve and release all 3 milestones sequentially.
+- **Assertions:** Each release updates released_amount; final release transitions to Completed; refundable balance is tracked correctly.
+- **Security:** Validates authorization checks, amount tracking, and state transitions.
+
+#### `rejects_release_without_sufficient_balance`
+- **Purpose:** Prevents overdraft attacks.
+- **Setup:** Deposit only 100 stroops, attempt to release 200 stroop milestone.
+- **Assertion:** Panics with InsufficientFunds error.
+- **Security:** Validates balance checks before release.
+
+#### `rejects_release_of_invalid_milestone`
+- **Purpose:** Prevents out-of-bounds access.
+- **Setup:** Attempt to release milestone index 3 when only 3 milestones exist (0-2).
+- **Assertion:** Panics with IndexOutOfBounds error.
+- **Security:** Validates milestone index bounds.
+
+#### `rejects_releasing_refunded_milestone`
+- **Purpose:** Prevents double-spending.
+- **Setup:** Refund milestone 1, then attempt to release it.
+- **Assertion:** Panics with AlreadyRefunded error.
+- **Security:** Validates milestone state before release.
+
+#### `rejects_releasing_same_milestone_twice`
+- **Purpose:** Prevents double-spending.
+- **Setup:** Release milestone 0, then attempt to release it again.
+- **Assertion:** Panics with MilestoneAlreadyReleased error.
+- **Security:** Validates milestone released flag.
+
+### Refund Tests (`test/refund.rs`)
+
+#### `refunds_selected_unreleased_milestones_and_preserves_remaining_balance`
+- **Purpose:** Validates partial refund logic and balance tracking.
+- **Setup:** Release milestone 0, refund milestone 1, keep milestone 2 available.
+- **Assertions:** Refunded amount is correct; milestone flags are set; refundable balance is accurate.
+- **Security:** Ensures refund accounting accuracy and state integrity.
+
+#### `marks_contract_refunded_when_all_unreleased_milestones_are_refunded`
+- **Purpose:** Validates state transition to Refunded status.
+- **Setup:** Refund all 3 milestones without releasing any.
+- **Assertions:** Contract status is Refunded; refundable balance is zero.
+- **Security:** Confirms proper state transition and finalization.
+
+#### `rejects_empty_refund_request`
+- **Purpose:** Prevents invalid state transitions.
+- **Setup:** Attempt to refund with empty milestone indices vector.
+- **Assertion:** Panics with EmptyRefundRequest error.
+- **Security:** Validates input sanitization.
+
+#### `rejects_duplicate_milestones_in_single_refund`
+- **Purpose:** Prevents double-refund attacks.
+- **Setup:** Attempt to refund milestone 1 twice in same call.
+- **Assertion:** Panics with DuplicateMilestoneInRefund error.
+- **Security:** Validates input sanitization and prevents accounting errors.
+
+#### `rejects_refunding_released_milestone`
+- **Purpose:** Prevents double-spending.
+- **Setup:** Release milestone 0, then attempt to refund it.
+- **Assertion:** Panics with AlreadyReleased error.
+- **Security:** Validates milestone state before refund.
+
+#### `rejects_refunding_same_milestone_twice`
+- **Purpose:** Prevents double-refund attacks.
+- **Setup:** Refund milestone 2, then attempt to refund it again.
+- **Assertion:** Panics with AlreadyRefunded error.
+- **Security:** Validates milestone refunded flag.
+
+#### `rejects_refund_when_balance_is_not_available`
+- **Purpose:** Prevents overdraft attacks.
+- **Setup:** Deposit only 200 stroops, attempt to refund 400 stroop milestone.
+- **Assertion:** Panics with InsufficientFunds error.
+- **Security:** Validates balance checks before refund.
+
+### Create Contract Tests (`test/create_contract.rs`)
+
+#### `creates_contract_and_persists_milestones`
+- **Purpose:** Validates contract creation and milestone persistence.
+- **Setup:** Create contract with 3 milestones.
+- **Assertions:** Contract ID is 1; status is Created; all milestone amounts are stored correctly.
+- **Security:** Ensures contract initialization and data integrity.
+
+#### `rejects_empty_milestones`
+- **Purpose:** Prevents invalid contract initialization.
+- **Setup:** Attempt to create contract with empty milestones vector.
+- **Assertion:** Panics with EmptyMilestones error.
+- **Security:** Validates input sanitization.
+
+#### `rejects_zero_amount_milestone`
+- **Purpose:** Prevents dust attacks.
+- **Setup:** Attempt to create contract with 0 stroop milestone.
+- **Assertion:** Panics with InvalidMilestoneAmount error.
+- **Security:** Validates milestone amount constraints.
+
+#### `rejects_same_participants`
+- **Purpose:** Prevents self-dealing.
+- **Setup:** Attempt to create contract where client and freelancer are the same address.
+- **Assertion:** Panics with InvalidParticipants error.
+- **Security:** Validates participant uniqueness.
+
+### Migration Notes
+
+**API Signature Updates:**
+- `deposit_funds(contract_id, amount)` → `deposit_funds(contract_id, caller, amount)`
+- `release_milestone(contract_id, milestone_index)` → `release_milestone(contract_id, caller, milestone_index)`
+- Added `approve_milestone_release(contract_id, caller, milestone_index)` calls before releases
+- `create_contract(client, freelancer, milestones)` → `create_contract(client, freelancer, arbiter, milestones, release_authorization)`
+
+**Security Enhancements:**
+- All tests now include proper authorization with `caller` parameter
+- Approval workflow is tested (approve before release)
+- ReleaseAuthorization mode is specified (ClientOnly for default tests)
+- Comprehensive rustdoc comments document security assumptions
 
 ## Test Categories
 
@@ -444,7 +630,8 @@ The cancellation tests cover all policy-defined scenarios for `cancel_contract`.
 
 ## Version
 
-- **Version:** 0.2.0
-- **Last Updated:** 2026-03-24
-- **Test Count:** 31
+- **Version:** 0.3.0
+- **Last Updated:** 2026-05-28
+- **Test Count:** 31+ (additional tests in migrated suites)
+- **New in v0.3.0:** Migrated orphaned test suites (deposit, release, refund, create_contract) from crate root to test/ directory with updated API signatures
 - **New in v0.2.0:** Contract cancellation path — 9 tests covering all status/role combinations

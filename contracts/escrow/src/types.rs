@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, String};
+use soroban_sdk::{contracterror, contracttype, Address, String};
 
 #[contracttype]
 pub enum DataKey {
@@ -6,6 +6,11 @@ pub enum DataKey {
     Freelancer,
     Milestones,
     Initialized,
+    Contract(u32),
+    NextContractId,
+    /// Stores milestone approval flags (contract_id, milestone_index) -> MilestoneApprovals
+    /// Stored in temporary storage with TTL for expiry grace period
+    MilestoneApprovals(u32, u32),
 }
 
 #[contracterror]
@@ -17,6 +22,26 @@ pub enum Error {
     IndexOutOfBounds = 3,
     AlreadyReleased = 4,
     InvalidStatusTransition = 5,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    ApprovalExpired = 19,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 24,
+    InvalidMilestoneAmount = 25,
 }
 
 #[contracttype]
@@ -26,6 +51,7 @@ pub enum ContractStatus {
     Funded = 1,
     Completed = 2,
     Disputed = 3,
+    Refunded = 4,
 }
 
 #[contracttype]
@@ -33,5 +59,43 @@ pub enum ContractStatus {
 pub struct Milestone {
     pub amount: i128,
     pub released: bool,
+    pub refunded: bool,
     pub work_evidence: Option<String>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Contract {
+    pub client: soroban_sdk::Address,
+    pub freelancer: soroban_sdk::Address,
+    pub arbiter: Option<soroban_sdk::Address>,
+    pub status: ContractStatus,
+    pub funded_amount: i128,
+    pub released_amount: i128,
+    pub refunded_amount: i128,
+    pub release_authorization: ReleaseAuthorization,
+}
+
+/// Defines who can approve milestone releases
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseAuthorization {
+    /// Only client can approve
+    ClientOnly = 0,
+    /// Either client or arbiter can approve
+    ClientAndArbiter = 1,
+    /// Only arbiter can approve
+    ArbiterOnly = 2,
+    /// Both client and freelancer must approve
+    MultiSig = 3,
+}
+
+/// Tracks approval status for a milestone
+/// Stored in temporary storage with TTL for expiry grace period
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneApprovals {
+    pub client_approved: bool,
+    pub freelancer_approved: bool,
+    pub arbiter_approved: bool,
 }
