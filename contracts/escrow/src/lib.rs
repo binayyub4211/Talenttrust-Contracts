@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN,
+    Env, Symbol, Vec,
 };
 
 mod ttl;
@@ -12,7 +12,7 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
-use types::ContractStatus;
+use crate::types::ContractStatus;
 
 mod types;
 
@@ -41,7 +41,6 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 1
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
 
-mod types;
 pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
 use crate::types::DataKey as ReadinessDataKey;
 
@@ -54,14 +53,18 @@ pub struct Escrow;
 pub enum EscrowError {
     InvalidParticipant = 1,
     EmptyMilestones = 2,
-    InvalidMilestoneAmount = 3,
-    InvalidDepositAmount = 4,
-    InvalidMilestone = 5,
-    UnauthorizedRole = 6,
-    InvalidStatusTransition = 7,
-    AlreadyCancelled = 8,
-    ContractNotFound = 9,
-    MilestonesAlreadyReleased = 10,
+    TooManyMilestones = 3,
+    InvalidMilestoneAmount = 4,
+    InvalidDepositAmount = 5,
+    InvalidMilestone = 6,
+    UnauthorizedRole = 7,
+    InvalidStatusTransition = 8,
+    AlreadyCancelled = 9,
+    ContractPaused = 10,
+    ArbiterAlreadyAssigned = 11,
+    ContractNotFound = 12,
+    MilestonesAlreadyReleased = 13,
+    NoLeftoverFunds = 14,
 }
 
 #[contracttype]
@@ -75,6 +78,15 @@ pub struct EscrowContractData {
     pub total_deposited: i128,
     pub released_amount: i128,
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowBounds {
+    pub max_milestones: u32,
+    pub max_total_escrow_stroops: i128,
+}
+
+type ContractData = EscrowContractData;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,8 +110,12 @@ pub struct PendingMigration {
 #[derive(Clone)]
 enum DataKey {
     Contract(u32),
+    Milestones(u32),
+    MilestoneApprovalTime(u32, u32),
     MilestoneReleased(u32, u32),
     RefundableBalance(u32),
+    ContractCount,
+    Paused,
 }
 
 fn update_readiness_checklist<F>(env: &Env, f: F)
@@ -137,9 +153,7 @@ impl Escrow {
         client: Address,
         freelancer: Address,
         arbiter: Option<Address>,
-        milestones: Vec<i128>,
-        terms_hash: Option<Bytes>,
-        grace_period_seconds: Option<u64>,
+        milestone_amounts: Vec<i128>,
     ) -> u32 {
         client.require_auth();
 
@@ -154,25 +168,19 @@ impl Escrow {
             }
         }
 
-        if milestones.is_empty() {
+        if milestone_amounts.is_empty() {
             env.panic_with_error(EscrowError::EmptyMilestones);
         }
-        if milestones.len() > MAX_MILESTONES {
+        if milestone_amounts.len() > MAX_MILESTONES {
             env.panic_with_error(EscrowError::TooManyMilestones);
         }
 
         let mut total_amount: i128 = 0;
-        let mut milestones: Vec<Milestone> = Vec::new(&env);
         for amount in milestone_amounts.iter() {
             if amount <= 0 {
                 env.panic_with_error(EscrowError::InvalidMilestoneAmount);
             }
             total_amount += amount;
-            milestones.push_back(Milestone {
-                amount,
-                released: false,
-                refunded: false,
-            });
         }
 
         let id: u32 = env
@@ -185,22 +193,76 @@ impl Escrow {
             client,
             freelancer,
             arbiter,
-            milestones,
+            milestones: milestone_amounts,
             status: ContractStatus::Created,
             total_deposited: 0,
             released_amount: 0,
         };
 
         env.storage().persistent().set(&DataKey::Contract(id), &data);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Milestones(id), &milestones);
         env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
 
         id
     }
 
-    pub fn deposit_funds(env: Env, contract_id: u32, amount: i128) -> bool {
+    /// Assign an arbiter on a contract that was created without one.
+    ///
+    /// Only the client or freelancer can assign the arbiter. The arbiter must be
+    /// distinct from both contract parties, can only be assigned once, and may
+    /// only be assigned while the contract is in `Created` or `Funded` state.
+    pub fn assign_arbiter(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        arbiter: Address,
+    ) -> bool {
+        caller.require_auth();
+
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::ContractPaused);
+        }
+
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
+
+        if !is_client && !is_freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        if contract.arbiter.is_some() {
+            env.panic_with_error(EscrowError::ArbiterAlreadyAssigned);
+        }
+
+        if arbiter == contract.client || arbiter == contract.freelancer {
+            env.panic_with_error(EscrowError::InvalidParticipant);
+        }
+
+        match contract.status {
+            ContractStatus::Created | ContractStatus::Funded => {}
+            _ => env.panic_with_error(EscrowError::InvalidStatusTransition),
+        }
+
+        contract.arbiter = Some(arbiter);
+        env.storage().persistent().set(&contract_key, &contract);
+
+        true
+    }
+
+    pub fn deposit_funds(env: Env, contract_id: u32, amount: i128, caller: Address) -> bool {
+        caller.require_auth();
+
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidDepositAmount);
         }
@@ -234,13 +296,26 @@ impl Escrow {
         true
     }
 
-    pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
+    pub fn release_milestone(
+        env: Env,
+        contract_id: u32,
+        milestone_index: u32,
+        caller: Address,
+    ) -> bool {
+        caller.require_auth();
+
         let contract_key = DataKey::Contract(contract_id);
         let mut contract = env
             .storage()
             .persistent()
             .get::<_, ContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
+        if !is_client && !is_freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
 
         // Mark this milestone as released
         let milestone_key = DataKey::MilestoneReleased(contract_id, milestone_index);
@@ -254,6 +329,63 @@ impl Escrow {
         env.storage().persistent().set(&contract_key, &contract);
 
         true
+    }
+
+    pub fn finalize_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        if contract.status != ContractStatus::Created && contract.status != ContractStatus::Funded {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        contract.status = ContractStatus::Completed;
+        env.storage().persistent().set(&contract_key, &contract);
+
+        true
+    }
+
+    pub fn withdraw_leftover(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+    ) -> i128 {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        if contract.status != ContractStatus::Completed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        let leftover = contract.total_deposited - contract.released_amount;
+        if leftover <= 0 {
+            env.panic_with_error(EscrowError::NoLeftoverFunds);
+        }
+
+        contract.total_deposited = contract.released_amount;
+        env.storage().persistent().set(&contract_key, &contract);
+
+        leftover
     }
 
     /// Get contract details

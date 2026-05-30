@@ -57,6 +57,31 @@ Typed error enum returned by dispute functions.
 
 ## Functions
 
+### `assign_arbiter`
+
+```rust
+pub fn assign_arbiter(
+    env: Env,
+    contract_id: u32,
+    caller: Address,
+    arbiter: Address,
+) -> bool
+```
+
+Assigns an arbiter to a contract that was created without one. The caller must be the client or freelancer, and the arbiter must be distinct from both parties. Once assigned, the arbiter is stored in `EscrowContractData.arbiter` and cannot be changed.
+
+Valid assignment states:
+- `Created`
+- `Funded`
+
+Invalid assignment states:
+- `Completed`
+- `Disputed`
+- `Cancelled`
+- `Refunded`
+
+Assignments are also blocked while the contract is paused.
+
 ### `initiate_dispute`
 
 ```rust

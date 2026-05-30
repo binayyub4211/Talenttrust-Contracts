@@ -10,7 +10,7 @@ use crate::{
     PENDING_MIGRATION_TTL_LEDGERS,
 };
 
-fn new_env() -> Env {
+pub(crate) fn new_env() -> Env {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|li| {
