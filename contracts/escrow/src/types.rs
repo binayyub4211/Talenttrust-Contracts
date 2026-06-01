@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, String};
+use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7,9 +7,17 @@ pub enum DataKey {
     Initialized,
     Admin,
     PendingAdmin,
+<<<<<<< HEAD
     ProtocolFeeBps,
     AccumulatedProtocolFees,
     // Contracts and milestones
+=======
+    Paused,
+    Emergency,
+    ReadinessChecklist,
+    ProtocolFeeBps,
+    AccumulatedProtocolFees,
+>>>>>>> 30df75a (I've completed this successfully.)
     Contract(u32),
     NextContractId,
     MilestoneReleased(u32, u32),
@@ -47,9 +55,13 @@ pub enum Error {
     FreelancerMismatch = 21,
     InvalidRating = 22,
     ReputationAlreadyIssued = 23,
+<<<<<<< HEAD
     InsufficientAccumulatedFees = 24,
     AccountingInvariantViolated = 25,
     PotentialOverflow = 26,
+=======
+    EmptyMilestones = 24,
+>>>>>>> 30df75a (I've completed this successfully.)
 }
 
 #[contracttype]

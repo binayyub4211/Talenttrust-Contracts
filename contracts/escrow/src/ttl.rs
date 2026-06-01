@@ -1,5 +1,5 @@
 /// TTL (Time To Live) constants for temporary storage
-/// 
+///
 /// These constants define the lifetime of approval records in temporary storage.
 /// Expired approvals are automatically evicted and treated as absent.
 
