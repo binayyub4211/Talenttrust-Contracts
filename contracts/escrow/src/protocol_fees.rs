@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
 use crate::{DataKey, Error, Escrow};
@@ -60,11 +61,65 @@ impl Escrow {
         env.events().publish(
             (symbol_short!("init"),),
             (admin, protocol_fee_bps, env.ledger().timestamp()),
+=======
+use crate::{DataKey, EscrowError};
+use soroban_sdk::{symbol_short, Address, Env};
+
+#[allow(dead_code)]
+impl super::Escrow {
+    /// Withdraws accumulated protocol fees from contract state.
+    ///
+    /// Requires the stored admin to authorize the call, rejects when no fees are
+    /// available, and rejects while the contract is paused or in emergency state.
+    ///
+    /// The accumulator at `DataKey::AccumulatedProtocolFees` is reset to zero
+    /// atomically and a `fee_wd` event is emitted with `(recipient, amount,
+    /// timestamp)`.
+    pub fn withdraw_protocol_fees(env: Env, admin: Address, recipient: Address) -> bool {
+        Self::require_admin(&env, &admin);
+
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::ContractPaused);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Emergency)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::EmergencyActive);
+        }
+
+        let amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccumulatedProtocolFees)
+            .unwrap_or(0_i128);
+
+        if amount <= 0 {
+            env.panic_with_error(EscrowError::InsufficientAccumulatedFees);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccumulatedProtocolFees, &0_i128);
+
+        env.events().publish(
+            (symbol_short!("fee_wd"),),
+            (recipient.clone(), amount, env.ledger().timestamp()),
+>>>>>>> 30df75a (I've completed this successfully.)
         );
 
         true
     }
 
+<<<<<<< HEAD
     /// Withdraw accumulated protocol fees to a designated recipient.
     /// 
     /// # Arguments
@@ -108,10 +163,23 @@ impl Escrow {
         }
 
         // Verify caller is the admin
+=======
+    fn require_admin(env: &Env, admin: &Address) {
+        let initialized = env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false);
+        if !initialized {
+            env.panic_with_error(EscrowError::NotInitialized);
+        }
+
+>>>>>>> 30df75a (I've completed this successfully.)
         let stored_admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
+<<<<<<< HEAD
             .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
 
         if admin != stored_admin {
@@ -218,5 +286,14 @@ impl Escrow {
             .persistent()
             .get::<_, bool>(&DataKey::Initialized)
             .unwrap_or(false)
+=======
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+
+        if &stored_admin != admin {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        admin.require_auth();
+>>>>>>> 30df75a (I've completed this successfully.)
     }
 }
