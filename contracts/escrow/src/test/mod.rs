@@ -4,7 +4,24 @@ use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, Vec}
 
 use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
-mod contract_id_allocation;
+// ─── Submodules ───────────────────────────────────────────────────────────────
+
+mod create_contract_bounds;
+mod admin_auth_helper;
+mod dispute;
+mod emergency_controls;
+mod lifecycle;
+mod pause_controls;
+mod ttl_tests;
+
+// ─── Shared constants ─────────────────────────────────────────────────────────
+
+#[allow(dead_code)] // shared test fixture; not all test modules use every constant
+pub const MILESTONE_ONE: i128 = 200_0000000;
+#[allow(dead_code)]
+pub const MILESTONE_TWO: i128 = 400_0000000;
+#[allow(dead_code)]
+pub const MILESTONE_THREE: i128 = 600_0000000;
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
