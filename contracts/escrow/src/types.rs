@@ -5,19 +5,37 @@ use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 pub enum DataKey {
     // Admin / governance / protocol parameters
     Initialized,
-    Admin,
-    PendingAdmin,
-<<<<<<< HEAD
-    ProtocolFeeBps,
-    AccumulatedProtocolFees,
-    // Contracts and milestones
-=======
-    Paused,
-    Emergency,
+    MilestoneFunded(u32),
     ReadinessChecklist,
-    ProtocolFeeBps,
-    AccumulatedProtocolFees,
->>>>>>> 30df75a (I've completed this successfully.)
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadinessChecklist {
+    pub initialized: bool,
+    pub governed_params_set: bool,
+    pub emergency_controls_enabled: bool,
+}
+
+impl Default for ReadinessChecklist {
+    fn default() -> Self {
+        Self {
+            initialized: false,
+            governed_params_set: false,
+            emergency_controls_enabled: false,
+        }
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MainnetReadinessInfo {
+    pub caps_set: bool,
+    pub governed_params_set: bool,
+    pub emergency_controls_enabled: bool,
+    pub initialized: bool,
+    pub protocol_version: u32,
+    pub max_escrow_total_stroops: i128,
     Contract(u32),
     NextContractId,
     MilestoneReleased(u32, u32),
