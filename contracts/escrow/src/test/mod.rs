@@ -12,6 +12,7 @@ mod pause_controls;
 mod persistence;
 mod reputation;
 mod release_authorization;
+mod client_migration;
 
 // --- Shared constants ---
 
@@ -99,12 +100,14 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// Soroban `try_*` methods return:
 ///   `Result<Result<T, ConversionError>, Result<soroban_sdk::Error, InvokeError>>`
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
-pub fn assert_contract_error<T>(
+/// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
+/// including both `EscrowError` and the canonical `Error` from `types.rs`.
+pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
     result: Result<
         Result<T, soroban_sdk::ConversionError>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
     >,
-    expected: EscrowError,
+    expected: E,
 ) {
     match result {
         Err(Ok(e)) => {
