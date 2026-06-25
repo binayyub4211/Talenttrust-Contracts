@@ -220,6 +220,12 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Env};
 
+    /// Verifies that under `ClientOnly` authorization, a client approval is
+    /// recorded and satisfies `check_approvals`.
+    ///
+    /// Fixture note: every `Milestone` is constructed with all six fields
+    /// (`amount`, `funded_amount`, `released`, `refunded`, `work_evidence`,
+    /// `refunded_amount`) to match the canonical struct in `types.rs`.
     #[test]
     fn test_approve_milestone_client_only() {
         let env = Env::default();
@@ -251,8 +257,6 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
                 work_evidence: None,
                 refunded_amount: 0,
             }],
@@ -272,6 +276,8 @@ mod tests {
         assert!(check.is_ok());
     }
 
+    /// Verifies `MultiSig` semantics: a single client approval is insufficient,
+    /// and release becomes authorized only after the freelancer also approves.
     #[test]
     fn test_approve_milestone_multisig() {
         let env = Env::default();
@@ -303,8 +309,6 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
                 work_evidence: None,
                 refunded_amount: 0,
             }],
@@ -330,6 +334,8 @@ mod tests {
         assert!(check.is_ok());
     }
 
+    /// Verifies that a second approval from the same party is rejected with
+    /// `AlreadyApproved`, preventing approval-count inflation by one signer.
     #[test]
     fn test_duplicate_approval_rejected() {
         let env = Env::default();
@@ -361,8 +367,6 @@ mod tests {
                 funded_amount: 0,
                 released: false,
                 refunded: false,
-                funded_amount: 0,
-                refunded_amount: 0,
                 work_evidence: None,
                 refunded_amount: 0,
             }],
@@ -380,5 +384,114 @@ mod tests {
         // Second approval fails
         let result = approve_milestone(&env, contract_id, 0, &client);
         assert_eq!(result, Err(Error::AlreadyApproved));
+    }
+
+    /// Verifies that under `ArbiterOnly` authorization the arbiter can approve
+    /// and satisfy `check_approvals`, while a non-arbiter party (the client) is
+    /// rejected with `UnauthorizedRole`.
+    #[test]
+    fn test_arbiter_approval_arbiter_only() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let arbiter = Address::generate(&env);
+
+        let contract = Contract {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            arbiter: Some(arbiter.clone()),
+            status: ContractStatus::Funded,
+            funded_amount: 1000,
+            released_amount: 0,
+            refunded_amount: 0,
+            release_authorization: ReleaseAuthorization::ArbiterOnly,
+        };
+
+        let contract_id = 1u32;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        let milestones = Vec::from_array(
+            &env,
+            [Milestone {
+                amount: 1000,
+                funded_amount: 0,
+                released: false,
+                refunded: false,
+                work_evidence: None,
+                refunded_amount: 0,
+            }],
+        );
+        let milestone_key = Symbol::new(&env, "milestones");
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
+
+        // Client is not authorized under ArbiterOnly
+        let unauthorized = approve_milestone(&env, contract_id, 0, &client);
+        assert_eq!(unauthorized, Err(Error::UnauthorizedRole));
+
+        // Arbiter approves - sufficient under ArbiterOnly
+        let result = approve_milestone(&env, contract_id, 0, &arbiter);
+        assert!(result.is_ok());
+
+        let check = check_approvals(&env, &contract, contract_id, 0);
+        assert!(check.is_ok());
+    }
+
+    /// Verifies that under `ClientAndArbiter` authorization a single arbiter
+    /// approval is sufficient for release (the mode accepts client OR arbiter).
+    #[test]
+    fn test_arbiter_approval_client_and_arbiter() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let arbiter = Address::generate(&env);
+
+        let contract = Contract {
+            client: client.clone(),
+            freelancer: freelancer.clone(),
+            arbiter: Some(arbiter.clone()),
+            status: ContractStatus::Funded,
+            funded_amount: 1000,
+            released_amount: 0,
+            refunded_amount: 0,
+            release_authorization: ReleaseAuthorization::ClientAndArbiter,
+        };
+
+        let contract_id = 1u32;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        let milestones = Vec::from_array(
+            &env,
+            [Milestone {
+                amount: 1000,
+                funded_amount: 0,
+                released: false,
+                refunded: false,
+                work_evidence: None,
+                refunded_amount: 0,
+            }],
+        );
+        let milestone_key = Symbol::new(&env, "milestones");
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
+
+        // Arbiter approves - sufficient under ClientAndArbiter
+        let result = approve_milestone(&env, contract_id, 0, &arbiter);
+        assert!(result.is_ok());
+
+        let check = check_approvals(&env, &contract, contract_id, 0);
+        assert!(check.is_ok());
     }
 }

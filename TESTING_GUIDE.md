@@ -574,3 +574,30 @@ No operation can change them once reached.
 5. **Add reviewers** from the TalentTrust team
 
 Your implementation is now ready for peer review and deployment! 🎉
+
+## Approvals Test Fixtures: `Milestone` Shape
+
+The unit tests in `contracts/escrow/src/approvals.rs` construct `Milestone`
+values directly. Every `Milestone { .. }` literal must list **all six** fields
+defined by the canonical struct in `contracts/escrow/src/types.rs`, with no
+field specified more than once:
+
+```rust
+Milestone {
+    amount: 1000,         // i128 — total milestone value
+    funded_amount: 0,     // i128 — amount escrowed for this milestone
+    released: false,      // bool — already released?
+    refunded: false,      // bool — already refunded?
+    work_evidence: None,  // Option<String> — optional evidence pointer
+    refunded_amount: 0,   // i128 — amount refunded so far
+}
+```
+
+Omitting a field, or repeating one (e.g. listing `funded_amount` twice), is a
+compile error (`E0063` / `E0062`) and silently disables the entire approvals
+test suite. When adding a field to `Milestone`, update every literal here so the
+fixtures keep exercising the real struct rather than a stale shape.
+
+Covered authorization modes: `ClientOnly`, `MultiSig` (client + freelancer),
+`ArbiterOnly`, and `ClientAndArbiter`, plus duplicate-approval rejection and an
+unauthorized-role check under `ArbiterOnly`.
