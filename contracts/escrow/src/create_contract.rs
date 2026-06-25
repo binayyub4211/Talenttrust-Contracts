@@ -35,6 +35,7 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
+        Self::require_not_paused(&env);
         client.require_auth();
 
         if client == freelancer {
