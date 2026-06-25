@@ -2,7 +2,7 @@ use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
 use crate::types::{
     Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
 };
-use soroban_sdk::{Address, Env, Symbol, Vec};
+use soroban_sdk::{Address, Env, Vec};
 
 /// Approves a milestone for release by the caller.
 ///
@@ -54,11 +54,10 @@ pub fn approve_milestone(
     }
 
     // Load milestones
-    let milestone_key = Symbol::new(env, "milestones");
     let milestones: Vec<Milestone> = env
         .storage()
         .persistent()
-        .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+        .get(&crate::ttl::milestone_storage_key(env, contract_id))
         .ok_or(Error::ContractNotFound)?;
 
     // Validate milestone index
@@ -255,11 +254,7 @@ mod tests {
                 refunded_amount: 0,
             }],
         );
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+        crate::ttl::store_milestones(&env, contract_id, &milestones);
 
         // Client approves
         let result = approve_milestone(&env, contract_id, 0, &client);
@@ -305,11 +300,7 @@ mod tests {
                 refunded_amount: 0,
             }],
         );
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+        crate::ttl::store_milestones(&env, contract_id, &milestones);
 
         // Only client approves - insufficient
         let result = approve_milestone(&env, contract_id, 0, &client);
@@ -361,11 +352,7 @@ mod tests {
                 refunded_amount: 0,
             }],
         );
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+        crate::ttl::store_milestones(&env, contract_id, &milestones);
 
         // First approval succeeds
         let result = approve_milestone(&env, contract_id, 0, &client);

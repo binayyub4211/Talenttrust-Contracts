@@ -2,7 +2,7 @@ use crate::{
     ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
     ReleaseAuthorization,
 };
-use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Vec};
 
 #[contractimpl]
 impl Escrow {
@@ -96,10 +96,7 @@ impl Escrow {
                 refunded_amount: 0,
             });
         }
-        let milestone_key = Symbol::new(&env, "milestones");
-        env.storage()
-            .persistent()
-            .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
+        ttl::store_milestones(&env, id, &milestone_vec);
 
         env.storage()
             .persistent()
