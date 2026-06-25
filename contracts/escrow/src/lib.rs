@@ -72,6 +72,9 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
+    AlreadyFinalized = 25,
+    PotentialOverflow = 26,
+    AccountingInvariantViolated = 27,
 }
 
 #[contracttype]
@@ -358,6 +361,8 @@ impl Escrow {
     /// * `AlreadyReleased` - If any milestone was already released
     /// * `AlreadyRefunded` - If any milestone was already refunded
     /// * `InsufficientFunds` - If contract doesn't have enough balance to refund
+    /// * `AlreadyFinalized` - If a finalization record already exists for this contract
+    /// * `InvalidState` - If contract status is not Created, Funded, or Disputed
     pub fn refund_unreleased_milestones(
         env: Env,
         contract_id: u32,
@@ -387,6 +392,16 @@ impl Escrow {
         ttl::extend_contract_ttl(&env, contract_id);
 
         Self::require_not_finalized(&env, contract_id);
+
+        // Only allow refunds while the contract is still in an active,
+        // unreleased state. Cancelled, Completed, and Refunded contracts
+        // must not be refundable again.
+        if contract.status != ContractStatus::Created
+            && contract.status != ContractStatus::Funded
+            && contract.status != ContractStatus::Disputed
+        {
+            env.panic_with_error(Error::InvalidState);
+        }
 
         contract.client.require_auth();
 
