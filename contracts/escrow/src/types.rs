@@ -26,6 +26,8 @@ pub enum Error {
     FreelancerMismatch = 20,
     InvalidRating = 21,
     ReputationAlreadyIssued = 22,
+    EmptyComment = 23,
+    CommentTooLong = 24,
 }
 
 #[contracttype]
@@ -119,6 +121,8 @@ pub enum Error {
     InvalidMilestoneAmount = 26,
     ContractIdCollision = 27,
     ContractIdOverflow = 28,
+    EmptyComment = 29,
+    CommentTooLong = 30,
 }
 
 #[contracttype]

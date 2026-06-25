@@ -72,6 +72,8 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
+    EmptyComment = 25,
+    CommentTooLong = 26,
 }
 
 #[contracttype]
@@ -667,8 +669,8 @@ impl Escrow {
         env: Env,
         contract_id: u32,
         caller: Address,
-        freelancer: Address,
-        rating: i128,
+        rating: u32,
+        comment: String,
     ) -> bool {
         let contract: Contract = env
             .storage()
@@ -680,12 +682,17 @@ impl Escrow {
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
         }
-        if freelancer != contract.freelancer {
-            env.panic_with_error(Error::FreelancerMismatch);
-        }
 
         if rating < 1 || rating > 5 {
             env.panic_with_error(EscrowError::InvalidRating);
+        }
+
+        if comment.len() == 0 {
+            env.panic_with_error(EscrowError::EmptyComment);
+        }
+
+        if comment.len() > 200 {
+            env.panic_with_error(EscrowError::CommentTooLong);
         }
 
         if contract.status != ContractStatus::Completed {
@@ -718,8 +725,8 @@ impl Escrow {
         let mut rep: types::Reputation =
             env.storage().persistent().get(&rep_key).unwrap_or_default();
         rep.completed_contracts += 1;
-        rep.total_rating += rating;
-        rep.last_rating = rating;
+        rep.total_rating += rating as i128;
+        rep.last_rating = rating as i128;
         env.storage().persistent().set(&rep_key, &rep);
 
         true
