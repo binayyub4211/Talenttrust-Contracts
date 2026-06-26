@@ -35,7 +35,7 @@ mod ttl;
 mod types;
 mod utils;
 
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, MAX_TOTAL_ESCROW_STROOPS};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -44,8 +44,6 @@ pub use types::{
     Milestone, MilestoneApprovals, MilestoneSummary, PendingAdminProposal, ReadinessChecklist,
     ReleaseAuthorization, Reputation, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-
-pub(crate) use amount_validation::safe_subtract_amounts;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, symbol_short, Address, Env, String, Symbol, Vec,
@@ -94,25 +92,12 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
-    TimelockNotElapsed = 31,
-    InvalidProtocolParameters = 32,
-    EmptyComment = 33,
-    CommentTooLong = 34,
-    EvidenceTooLong = 35,
-    SettlementTokenAlreadyBound = 36,
-    SettlementTokenNotConfigured = 37,
-    FundingExceedsRequired = 38,
-    InsufficientEscrowBalance = 39,
-    MilestoneAlreadyReleased = 40,
-    MilestoneNotFound = 41,
-    TooManyMilestones = 42,
-    TotalCapExceeded = 43,
-    TotalExceedsMaxEscrow = 44,
-    InvalidParticipants = 45,
+    EvidenceTooLong = 31,
+    TimelockNotElapsed = 32,
+    InvalidProtocolParameters = 33,
+    EmptyComment = 34,
+    CommentTooLong = 35,
 }
-
-#[contract]
-pub struct Escrow;
 
 #[contractimpl]
 impl Escrow {
@@ -246,7 +231,14 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
-        create_contract::create_contract_impl(&env, client, freelancer, arbiter, milestones, release_authorization)
+        create_contract::create_contract_impl(
+            &env,
+            client,
+            freelancer,
+            arbiter,
+            milestones,
+            release_authorization,
+        )
     }
 
     /// Accept a contract as the assigned freelancer, transitioning status from
@@ -334,7 +326,10 @@ impl Escrow {
     }
 
     /// Return immutable close metadata for `contract_id`, if it has been finalized.
-    pub fn get_finalization_record(env: Env, contract_id: u32) -> Option<finalize::FinalizationRecord> {
+    pub fn get_finalization_record(
+        env: Env,
+        contract_id: u32,
+    ) -> Option<finalize::FinalizationRecord> {
         finalize::get_finalization_record_impl(&env, contract_id)
     }
 
@@ -458,8 +453,12 @@ impl Escrow {
         }
 
         // Check if there's enough balance
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        let available_balance = safe_subtract_amounts(
+            safe_subtract_amounts(contract.funded_amount, contract.released_amount)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated)),
+            contract.refunded_amount,
+        )
+        .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
         if available_balance < milestone.amount {
             env.panic_with_error(Error::InsufficientFunds);
         }
@@ -472,7 +471,15 @@ impl Escrow {
         // remain the last operation in this function.
         milestone.released = true;
         milestones.set(milestone_index, milestone.clone());
-        contract.released_amount += milestone.amount;
+        contract.released_amount = safe_add_amounts(contract.released_amount, milestone.amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        // Assert invariant: funded_amount >= released_amount + refunded_amount
+        let invariant = safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        if contract.funded_amount < invariant {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
 
         // Accumulate protocol fees if initialized with a fee rate
         if Self::is_initialized(&env) {
@@ -487,7 +494,8 @@ impl Escrow {
                     .unwrap_or(0);
                 env.storage().persistent().set(
                     &DataKey::AccumulatedProtocolFees,
-                    &(current_accumulated + fee),
+                    &(safe_add_amounts(current_accumulated, fee)
+                        .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))),
                 );
                 ttl::extend_accumulated_fees_ttl(&env);
             }
@@ -658,16 +666,16 @@ impl Escrow {
             }
 
             total_refund_amount = safe_add_amounts(total_refund_amount, milestone.amount)
-                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
         }
 
-        // Check if there's enough balance using checked arithmetic
+        // Check if there's enough balance
         let available_balance = safe_subtract_amounts(
             safe_subtract_amounts(contract.funded_amount, contract.released_amount)
-                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated)),
             contract.refunded_amount,
         )
-        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
+        .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
         if available_balance < total_refund_amount {
             env.panic_with_error(Error::InsufficientFunds);
         }
@@ -681,7 +689,14 @@ impl Escrow {
         }
 
         contract.refunded_amount = safe_add_amounts(contract.refunded_amount, total_refund_amount)
-            .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        // Assert invariant: funded_amount >= released_amount + refunded_amount
+        let invariant = safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        if contract.funded_amount < invariant {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
 
         // Check if all unreleased milestones are refunded
         let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
@@ -809,12 +824,11 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
-        safe_subtract_amounts(
+        let after_releases =
             safe_subtract_amounts(contract.funded_amount, contract.released_amount)
-                .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow)),
-            contract.refunded_amount,
-        )
-        .unwrap_or_else(|| env.panic_with_error(Error::PotentialOverflow))
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
+        safe_subtract_amounts(after_releases, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated))
     }
 
     /// Retrieves approval status for a milestone.
@@ -904,15 +918,13 @@ impl Escrow {
     /// Emits `("emergency", "activated")` with `(admin, timestamp)` payload.
     /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn activate_emergency_pause(env: Env) -> bool {
-        if env
+        Self::require_initialized(&env);
+        let admin: Address = env
             .storage()
             .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-            admin.require_auth();
-        }
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+        admin.require_auth();
         env.storage().persistent().set(&DataKey::Emergency, &true);
         env.storage().persistent().set(&DataKey::Paused, &true);
 
@@ -945,9 +957,15 @@ impl Escrow {
     /// Emits `("emergency", "resolved")` with `(admin, timestamp)` payload.
     /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn resolve_emergency(env: Env) -> bool {
-        Self::require_initialized(&env);
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+            admin.require_auth();
+        }
         env.storage().persistent().set(&DataKey::Emergency, &false);
         env.storage().persistent().set(&DataKey::Paused, &false);
         let mut checklist: ReadinessChecklist = env
@@ -1101,14 +1119,19 @@ impl Escrow {
         if pending <= 0 {
             env.panic_with_error(EscrowError::InvalidState);
         }
-        env.storage().persistent().set(&pending_key, &(pending - 1));
-        ttl::extend_pending_reputation_credits_ttl(&env, &contract.freelancer);
+        env.storage().persistent().set(
+            &pending_key,
+            &safe_subtract_amounts(pending, 1)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow)),
+        );
 
         let rep_key = DataKey::Reputation(contract.freelancer.clone());
         let mut rep: types::Reputation =
             env.storage().persistent().get(&rep_key).unwrap_or_default();
-        rep.completed_contracts += 1;
-        rep.total_rating += rating as i128;
+        rep.completed_contracts = safe_add_amounts(rep.completed_contracts, 1)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        rep.total_rating = safe_add_amounts(rep.total_rating, rating as i128)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
         rep.last_rating = rating as i128;
         env.storage().persistent().set(&rep_key, &rep);
         ttl::extend_reputation_ttl(&env, &contract.freelancer);
@@ -1263,6 +1286,51 @@ impl Escrow {
     }
 
     // -----------------------------------------------------------------------
+    // Internal helpers
+    // ── Protocol fee helpers ─────────────────────────────────────────────────
+
+    pub(crate) fn get_protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
+        if fee_bps == 0 {
+            return 0;
+        }
+        amount * fee_bps as i128 / 10_000
+    }
+
+    // ── Internal guards ──────────────────────────────────────────────────────
+
+    /// Panics with `NotInitialized` unless `initialize` has been called.
+    ///
+    /// Called at the top of every lifecycle entrypoint — `create_contract`,
+    /// `deposit_funds`, `release_milestone`, `refund_unreleased_milestones`,
+    /// and `cancel_contract` — so that the admin-controlled safety rails
+    /// (pause, emergency controls, protocol fees) are always in scope before
+    /// any money can move.
+    pub(crate) fn require_initialized(env: &Env) {
+        if !env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::NotInitialized);
+        }
+    }
+
+    fn is_initialized(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Initialized)
+            .unwrap_or(false)
+    }
+
+    // -----------------------------------------------------------------------
     // Dispute management
     // -----------------------------------------------------------------------
 
@@ -1403,11 +1471,18 @@ impl Escrow {
             dispute::resolution_payouts(&contract, &resolution)
                 .unwrap_or_else(|e| env.panic_with_error(e));
 
-        // Update contract accounting with checked arithmetic
+        // Update contract accounting
         contract.refunded_amount = safe_add_amounts(contract.refunded_amount, client_payout)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
         contract.released_amount = safe_add_amounts(contract.released_amount, freelancer_payout)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        // Assert invariant: funded_amount == released_amount + refunded_amount
+        let invariant = safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        if invariant != contract.funded_amount {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
 
         // Set final status
         contract.status = dispute::final_status_after_resolution(&contract);
