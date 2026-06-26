@@ -62,7 +62,7 @@ impl Escrow {
 
         if contract.funded_amount >= total_amount {
             contract.status = ContractStatus::Funded;
-        } else if contract.funded_amount > 0 {
+        } else if contract.funded_amount > 0 && contract.status == ContractStatus::Created {
             contract.status = ContractStatus::PartiallyFunded;
         }
 

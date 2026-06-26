@@ -1,5 +1,38 @@
 use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    // Admin / pause / emergency
+    Initialized,
+    Admin,
+    Paused,
+    Emergency,
+    // Contract storage
+    Contract(u32),
+    NextContractId,
+    MilestoneReleased(u32, u32),
+    MilestoneApprovals(u32, u32),
+    // Reputation
+    ReputationIssued(u32),
+    PendingReputationCredits(Address),
+    Reputation(Address),
+    // Client migration
+    PendingClientMigration(u32),
+    // Protocol / governance
+    GovernanceAdmin,
+    PendingGovernanceAdmin,
+    ProtocolParameters,
+    ProtocolFeeBps,
+    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    PendingAdmin,
+    AccumulatedProtocolFees,
+    GovernedParameters,
+    ReadinessChecklist,
+    // Finalization
+    Finalization(u32),
+}
+
 /// Canonical contract error type for all entrypoint-facing errors.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]

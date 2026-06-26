@@ -3,9 +3,6 @@
 //! Provides centralized validation for all money-like values in the escrow contract.
 //! Ensures positivity, max bounds, and proper stroop precision handling.
 
-use crate::EscrowError;
-use soroban_sdk::contracterror;
-
 /// Maximum number of decimal places for stroop precision (7 decimal places for Stellar)
 #[allow(dead_code)] // available for callers; not used internally
 pub const STROOP_PRECISION: u8 = 7;

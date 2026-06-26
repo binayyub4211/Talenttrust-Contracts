@@ -7,8 +7,8 @@ use crate::{
     Contract, EscrowError,
 };
 use soroban_sdk::{
-    testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, Address, Env, Symbol,
-    TryFromVal, Val,
+    testutils::Address as _, testutils::Events, testutils::Ledger as _, testutils::LedgerInfo,
+    xdr::ToXdr, Address, Env, Symbol,
 };
 
 use super::{assert_contract_error, create_contract, register_client, total_milestone_amount};
@@ -36,19 +36,14 @@ fn set_escrow_status(env: &Env, escrow_addr: &Address, id: u32, status: Contract
 //   tuple.2 = the data Val
 // ---------------------------------------------------------------------------
 
-fn has_event_with_topic(
-    env: &Env,
-    events: &soroban_sdk::Vec<(soroban_sdk::Address, soroban_sdk::Vec<Val>, Val)>,
-    topic: &Symbol,
-) -> bool {
-    events.iter().any(|event| {
-        let topics = &event.1;
+fn has_event_with_topic(env: &Env, topic: &Symbol) -> bool {
+    let topic_xdr = topic.to_xdr(env);
+    env.events().all().iter().any(|event| {
+        let topics = event.1.clone();
         if topics.is_empty() {
             return false;
         }
-        let val = topics.get(0).unwrap();
-        // Convert the Val back to Symbol for comparison
-        <Symbol as TryFromVal<Env, Val>>::try_from_val(env, &val).is_ok_and(|s| s == *topic)
+        topics.get(0).unwrap().to_xdr(env) == topic_xdr
     })
 }
 
@@ -89,10 +84,16 @@ fn propose_and_accept_updates_client_and_emits_events() {
     // --- Proposal ---
     assert!(client.propose_client_migration(&id, &client_addr, &new_client));
 
-    // Capture events immediately after the mutation to avoid the
-    // framework's event tracker being cleared by subsequent read-only
-    // view calls (e.g. has_pending_client_migration).
-    let events_snapshot = soroban_sdk::testutils::Events::all(&env.events());
+    // Capture events immediately after proposal before any other SDK calls
+    let events_after_proposal = env.events().all();
+    assert!(
+        !events_after_proposal.is_empty(),
+        "at least one event must be emitted after proposal"
+    );
+    assert!(
+        has_event_with_topic(&env, &Symbol::new(&env, "client_migration_proposed")),
+        "client_migration_proposed event not found"
+    );
 
     assert!(client.has_pending_client_migration(&id));
 
@@ -105,25 +106,14 @@ fn propose_and_accept_updates_client_and_emits_events() {
         "expires_at_ledger must be in the future"
     );
 
-    // `client_migration_proposed` event is emitted (topic is topics[0], not event.0)
-    assert!(
-        !events_snapshot.is_empty(),
-        "at least one event must be emitted after proposal"
-    );
-    assert!(
-        has_event_with_topic(
-            &env,
-            &events_snapshot,
-            &Symbol::new(&env, "client_migration_proposed")
-        ),
-        "client_migration_proposed event not found"
-    );
-
     // --- Acceptance ---
     assert!(client.accept_client_migration(&id, &new_client));
 
-    // Capture events immediately after acceptance too.
-    let events_snapshot = soroban_sdk::testutils::Events::all(&env.events());
+    // Capture events from acceptance before other SDK calls
+    assert!(
+        has_event_with_topic(&env, &Symbol::new(&env, "client_migration_accepted")),
+        "client_migration_accepted event not found"
+    );
 
     // contract.client is now the new address
     let contract = client.get_contract(&id);
@@ -131,16 +121,6 @@ fn propose_and_accept_updates_client_and_emits_events() {
 
     // Pending record is cleared
     assert!(!client.has_pending_client_migration(&id));
-
-    // `client_migration_accepted` event is emitted
-    assert!(
-        has_event_with_topic(
-            &env,
-            &events_snapshot,
-            &Symbol::new(&env, "client_migration_accepted")
-        ),
-        "client_migration_accepted event not found"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -246,10 +226,9 @@ fn expired_proposal_cannot_be_accepted() {
 // Test 4 – migration blocked on all four terminal statuses
 // ---------------------------------------------------------------------------
 
-// `require_migration_allowed` in migration.rs blocks proposals when the
-// escrow is in a terminal state.  All four terminal states are tested.
-
-/// Completed contract blocks proposal.
+/// `require_migration_allowed` in migration.rs blocks proposals when the
+/// escrow is in a terminal state.  All four terminal states are tested.
+///
 #[test]
 fn migration_blocked_on_completed_contract() {
     let env = Env::default();

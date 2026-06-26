@@ -37,7 +37,7 @@ mod ttl;
 mod types;
 mod utils;
 
-pub use amount_validation::safe_subtract_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
@@ -82,9 +82,11 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    PotentialOverflow = 25,
-    AccountingInvariantViolated = 26,
+    AmountMustBePositive = 25,
+    PotentialOverflow = 26,
     AlreadyFinalized = 27,
+    AccountingInvariantViolated = 28,
+    InvalidDisputeSplit = 29,
 }
 
 #[contracttype]
@@ -119,6 +121,9 @@ impl Escrow {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Initialized, &true);
         env.storage().persistent().set(&DataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &1u32);
 
         let mut checklist: ReadinessChecklist = env
             .storage()
@@ -186,7 +191,6 @@ impl Escrow {
         milestone_index: u32,
     ) -> bool {
         Self::require_not_finalized(&env, contract_id);
-
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
@@ -207,9 +211,8 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
 
         contract
@@ -509,7 +512,6 @@ impl Escrow {
 
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
         Self::require_not_paused(&env);
-
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -527,6 +529,7 @@ impl Escrow {
         }
 
         caller.require_auth();
+        Self::require_not_finalized(&env, contract_id);
         contract.status = ContractStatus::Cancelled;
         env.storage()
             .persistent()
@@ -547,13 +550,16 @@ impl Escrow {
         rating: i128,
     ) -> bool {
         Self::require_not_paused(&env);
-
         let contract: Contract = env
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
+
+        if contract.status != ContractStatus::Completed {
+            env.panic_with_error(EscrowError::NotCompleted);
+        }
 
         if caller != contract.client {
             env.panic_with_error(EscrowError::UnauthorizedRole);
@@ -564,10 +570,6 @@ impl Escrow {
 
         if rating < 1 || rating > 5 {
             env.panic_with_error(EscrowError::InvalidRating);
-        }
-
-        if contract.status != ContractStatus::Completed {
-            env.panic_with_error(EscrowError::NotCompleted);
         }
 
         if env

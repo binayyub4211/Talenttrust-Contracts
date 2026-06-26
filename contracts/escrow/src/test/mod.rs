@@ -3,7 +3,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
+use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
 // --- Submodules ---
 
@@ -102,29 +102,8 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
-pub fn assert_contract_error<T, ConvErr, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
-    result: Result<Result<T, ConvErr>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
-    expected: E,
-) {
-    match result {
-        Err(Ok(e)) => {
-            let expected_err: soroban_sdk::Error = expected.into();
-            assert_eq!(e, expected_err, "contract error code mismatch");
-        }
-        _other => panic!(
-            "expected contract error {:?}, got unexpected result variant",
-            expected
-        ),
-    }
-}
-
-/// Assert that an i128-returning try_* call (e.g. try_refund_unreleased_milestones)
-/// returned the expected error.
-pub fn assert_contract_error_i128<E: Into<soroban_sdk::Error> + core::fmt::Debug>(
-    result: Result<
-        Result<i128, soroban_sdk::Error>,
-        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
-    >,
+pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
+    result: Result<T, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
     expected: E,
 ) {
     match result {

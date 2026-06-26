@@ -44,10 +44,7 @@ fn finalize_completed_contract_allows_client_finalizer() {
         super::create_contract_with_arbiter(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
-    // Note: raise_dispute would be called here once implemented
-    // For now, set dispute state via internal helper
-    let escrow_addr = client.address.clone();
-    super::set_escrow_status(&env, &escrow_addr, contract_id, ContractStatus::Disputed);
+    assert!(client.raise_dispute(&contract_id, &client_addr));
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Disputed

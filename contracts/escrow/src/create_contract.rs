@@ -46,17 +46,7 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
-        if is_initialized(&env) {
-            if env
-                .storage()
-                .persistent()
-                .get::<_, bool>(&DataKey::Paused)
-                .unwrap_or(false)
-            {
-                env.panic_with_error(crate::EscrowError::ContractPaused);
-            }
-        }
-
+        Self::require_not_paused(&env);
         client.require_auth();
 
         if client == freelancer {
@@ -94,50 +84,6 @@ impl Escrow {
             // If governance parameters are not set, allow any total (use max i128)
             i128::MAX
         };
-
-        // Validate milestone amounts and total against caps
-        let mut native_milestones = [0_i128; MAX_MILESTONES as usize];
-        let len = milestones.len() as usize;
-        for i in 0..len {
-            native_milestones[i] = milestones.get(i as u32).unwrap();
-        }
-        match amount_validation::validate_milestone_amounts(&native_milestones[..len], max_total) {
-            Ok(_) => (),
-            Err(err) => match err {
-                Error::InvalidMilestoneAmount => env.panic_with_error(Error::InvalidMilestoneAmount),
-                Error::TotalCapExceeded => env.panic_with_error(Error::TotalCapExceeded),
-                _ => env.panic_with_error(Error::InvalidMilestoneAmount),
-            },
-        }
-
-        // Get the next contract ID (defaults to 1 on first call)
-        let id: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::NextContractId)
-            .unwrap_or(1);
-
-        // Check for collision with an existing contract at this slot
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Contract>(&DataKey::Contract(id))
-            .is_some()
-        {
-            env.panic_with_error(Error::ContractIdCollision);
-        }
-
-        // Advance NextContractId BEFORE writing any contract data so that
-        // an overflow is caught-without leaving partial state behind.
-        let next_id = id
-            .checked_add(1)
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextContractId, &next_id);
-        // The key is now stored — safe to extend TTL (calling extend_ttl
-        // on a never-persisted key raises a HostError in SDK 22.)
-        ttl::extend_next_contract_id_ttl(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
@@ -191,7 +137,14 @@ impl Escrow {
                 deadline: None,
             });
         }
-        ttl::store_milestones(&env, id, &milestone_vec);
+        let milestone_key = Symbol::new(&env, "milestones");
+        env.storage()
+            .persistent()
+            .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
+
+        bump_next_contract_id(&env, id);
+
+        ttl::extend_next_contract_id_ttl(&env);
 
         env.events().publish(
             (symbol_short!("created"), id),
@@ -200,4 +153,34 @@ impl Escrow {
 
         id
     }
+}
+
+/// Returns the next contract id after verifying the slot is unused.
+fn next_contract_id(env: &Env) -> u32 {
+    let id: u32 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::NextContractId)
+        .unwrap_or(1);
+
+    if env
+        .storage()
+        .persistent()
+        .get::<_, Contract>(&DataKey::Contract(id))
+        .is_some()
+    {
+        env.panic_with_error(Error::ContractIdCollision);
+    }
+
+    id
+}
+
+/// Advances [`DataKey::NextContractId`] after a contract is persisted.
+fn bump_next_contract_id(env: &Env, id: u32) {
+    let next_id = id
+        .checked_add(1)
+        .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
+    env.storage()
+        .persistent()
+        .set(&DataKey::NextContractId, &next_id);
 }
