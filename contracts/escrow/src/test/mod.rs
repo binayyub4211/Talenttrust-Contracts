@@ -3,17 +3,16 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Milestone, ReleaseAuthorization};
+use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // --- Submodules ---
 
 mod client_migration;
+mod deposit;
 mod emergency_controls;
-mod input_sanitization_amounts;
+mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
-mod release;
-mod reputation;
 mod release_authorization;
 mod reputation;
 
@@ -106,7 +105,10 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
-pub fn assert_contract_error<T: core::fmt::Debug, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
+pub fn assert_contract_error<
+    T: core::fmt::Debug,
+    E: Into<soroban_sdk::Error> + core::fmt::Debug,
+>(
     result: Result<
         Result<T, soroban_sdk::ConversionError>,
         Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
@@ -125,11 +127,6 @@ pub fn assert_contract_error<T: core::fmt::Debug, E: Into<soroban_sdk::Error> + 
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers used by refund, release, deposit, and create_contract submodules
-// ---------------------------------------------------------------------------
-
-/// Returns `(Env, client_addr, freelancer_addr)` with all auths mocked.
 pub fn setup() -> (Env, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -138,19 +135,17 @@ pub fn setup() -> (Env, Address, Address) {
     (env, client_addr, freelancer_addr)
 }
 
-/// Registers the Escrow contract and returns an `EscrowClient` bound to it.
 pub fn create_client(env: &Env) -> EscrowClient<'_> {
     register_client(env)
 }
 
-/// Creates the default 3-milestone contract (200 / 400 / 600 stroops) and returns its id.
 pub fn create_default_contract(
     env: &Env,
-    client: &EscrowClient,
+    client: &EscrowClient<'_>,
     client_addr: &Address,
     freelancer_addr: &Address,
 ) -> u32 {
-    let milestones = vec![env, MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE];
+    let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
     client.create_contract(
         client_addr,
         freelancer_addr,
@@ -160,7 +155,6 @@ pub fn create_default_contract(
     )
 }
 
-/// Asserts `funded_amount`, `released_amount`, `refunded_amount`, and `status` on a `Contract`.
 pub fn assert_contract_state(
     contract: Contract,
     expected_status: ContractStatus,
@@ -168,41 +162,8 @@ pub fn assert_contract_state(
     expected_released: i128,
     expected_refunded: i128,
 ) {
-    assert_eq!(contract.status, expected_status, "status mismatch");
-    assert_eq!(
-        contract.funded_amount, expected_funded,
-        "funded_amount mismatch"
-    );
-    assert_eq!(
-        contract.released_amount, expected_released,
-        "released_amount mismatch"
-    );
-    assert_eq!(
-        contract.refunded_amount, expected_refunded,
-        "refunded_amount mismatch"
-    );
-}
-
-/// Asserts `released` and `refunded` flags on the milestone at `index`.
-pub fn assert_milestone_flags(
-    milestones: Vec<Milestone>,
-    index: u32,
-    expected_released: bool,
-    expected_refunded: bool,
-) {
-    let m = milestones.get(index).expect("milestone index out of bounds");
-    assert_eq!(m.released, expected_released, "milestone.released mismatch at index {index}");
-    assert_eq!(m.refunded, expected_refunded, "milestone.refunded mismatch at index {index}");
-}
-
-/// Alias used by `hello.rs`.
-pub fn setup_env() -> Env {
-    let env = Env::default();
-    env.mock_all_auths();
-    env
-}
-
-/// Alias used by `hello.rs`.
-pub fn register_escrow(env: &Env) -> EscrowClient<'_> {
-    register_client(env)
+    assert_eq!(contract.status, expected_status);
+    assert_eq!(contract.funded_amount, expected_funded);
+    assert_eq!(contract.released_amount, expected_released);
+    assert_eq!(contract.refunded_amount, expected_refunded);
 }

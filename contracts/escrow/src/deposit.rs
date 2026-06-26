@@ -20,27 +20,10 @@ impl Escrow {
     /// `true` if deposit was successful
     ///
     /// # Errors
-    /// * `ContractPaused` - If the contract is paused while not in emergency
-    /// * `EmergencyActive` - If the contract is in an active emergency pause
-    /// * `AmountMustBePositive` - If `amount <= 0`
-    /// * `ContractNotFound` - If `contract_id` was never allocated
-    /// * `UnauthorizedRole` - If `caller` is not the stored client
-    /// * `SettlementTokenNotConfigured` - If no SAC token has been bound
-    /// * `TokenTransferFailed` - If the SAC transfer panics
-    /// * `InvalidDepositAmount` - If the deposit would push `funded_amount`
-    ///   past `total_amount` (over-funding) or would overflow
-    ///
-    /// # Security
-    /// * Pause/emergency gate runs BEFORE any state read, TTL bump, auth,
-    ///   or balance change so funds cannot move while the contract is paused.
-    /// * Caller authentication runs BEFORE the SAC transfer so a non-authed
-    ///   SAC transfer cannot be initiated by the escrow.
-    /// * The SAC `transfer(caller -> contract, amount)` happens BEFORE the
-    ///   `funded_amount` update, so a failed transfer leaves the contract
-    ///   accounting untouched.
-    /// * Over-funding is detected via `checked_add` BEFORE the contract is
-    ///   mutated; the previous code would happily accept over-funds and
-    ///   silently mask them with a `Created`/`Funded` transition.
+    /// * `AmountMustBePositive` - If amount is <= 0
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `InvalidState` - If contract is not in Created or PartiallyFunded state
+    /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         if let Err(e) = validate_single_amount(amount) {
             match e {
@@ -70,27 +53,12 @@ impl Escrow {
         }
         caller.require_auth();
 
-        // 4. Read the bound SAC settlement token. The token address is
-        //    admin-bound once at deploy time via `bind_settlement_token`.
-        let settlement_token: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SettlementToken)
-            .unwrap_or_else(|| {
-                env.panic_with_error(EscrowError::SettlementTokenNotConfigured)
-            });
+        if contract.status != ContractStatus::Created
+            && contract.status != ContractStatus::PartiallyFunded
+        {
+            env.panic_with_error(Error::InvalidState);
+        }
 
-        // 5. SAC debit: pull `amount` from the caller's SAC balance into
-        //    the escrow contract. The SAC's own `_transfer` requires
-        //    `caller` auth; combined with `caller.require_auth()` above,
-        //    this means no off-chain replay can move funds without the
-        //    caller's signature.
-        let token_client = soroban_sdk::token::Client::new(&env, &settlement_token);
-        token_client.transfer(&caller, &env.current_contract_address(), &amount);
-
-        // 6. Update accounting. Read milestones and compute the post-deposit
-        //    funded amount using `checked_add`. Reject over-funding BEFORE
-        //    any write to the contract.
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones: Vec<Milestone> = env
             .storage()
@@ -101,6 +69,12 @@ impl Escrow {
         ttl::extend_milestone_ttl(env, contract_id);
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
+
+        if contract.funded_amount + amount > total_amount {
+            env.panic_with_error(Error::InvalidState);
+        }
+
+        contract.funded_amount += amount;
 
         if contract.funded_amount >= total_amount {
             contract.status = ContractStatus::Funded;
