@@ -1,7 +1,8 @@
 use crate::{
-    DataKey, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters, ReadinessChecklist,
+    DataKey, Error, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters,
+    ReadinessChecklist, ADMIN_ROTATION_MIN_DELAY_LEDGERS,
 };
-use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contractimpl, contracttype, symbol_short, Address, Env, Symbol};
 
 /// Pending admin proposal stored under `DataKey::PendingAdmin`.
 #[contracttype]
@@ -140,62 +141,5 @@ impl Escrow {
     /// Internal: return the current admin address.
     pub(crate) fn get_governance_admin_impl(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
-    }
-
-    /// Set both governance parameters at once and update the readiness checklist.
-    pub fn set_governed_params(
-        env: Env,
-        admin: Address,
-        protocol_fee_bps: u32,
-        max_escrow_total_stroops: i128,
-    ) -> bool {
-        if !env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&crate::DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(EscrowError::NotInitialized);
-        }
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-
-        if admin != stored_admin {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
-        }
-        admin.require_auth();
-
-        if protocol_fee_bps > 10_000 {
-            env.panic_with_error(EscrowError::InvalidProtocolParameters);
-        }
-
-        let params = GovernedParameters {
-            protocol_fee_bps,
-            max_escrow_total_stroops,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::GovernedParameters, &params);
-
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        checklist.governed_params_set = true;
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
-
-        true
-    }
-
-    /// Retrieve the current governed parameters.
-    pub fn get_governed_parameters(env: Env) -> Option<GovernedParameters> {
-        env.storage().persistent().get(&DataKey::GovernedParameters)
     }
 }

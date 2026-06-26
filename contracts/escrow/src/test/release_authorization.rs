@@ -721,7 +721,7 @@ fn release_emits_events() {
         let topics = &event.1;
         topics.len() > 0 && {
             if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(0).unwrap()) {
-                sym == Symbol::new(&env, "milestone_released")
+                sym == soroban_sdk::symbol_short!("mlstn_rls")
             } else {
                 false
             }
@@ -755,6 +755,7 @@ fn rejects_double_release_and_completes_contract() {
     assert_contract_error(result, Error::MilestoneAlreadyReleased);
 
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
+    assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let contract = client.get_contract(&contract_id);
     assert_eq!(contract.status, ContractStatus::Completed);

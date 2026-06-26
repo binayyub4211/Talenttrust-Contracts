@@ -1,4 +1,4 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone};
+use crate::{emit_status_changed, ttl, Contract, ContractStatus, DataKey, Error, Milestone};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -35,7 +35,9 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     }
     caller.require_auth();
 
-    if contract.status != ContractStatus::Created {
+    if contract.status != ContractStatus::Created
+        && contract.status != ContractStatus::PartiallyFunded
+    {
         env.panic_with_error(Error::InvalidState);
     }
 
@@ -45,10 +47,22 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
 
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-    if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
-       let old_status = contract.status.clone();
-        contract.status = ContractStatus::Funded;
-        emit_status_changed(env, contract_id, old_status, ContractStatus::Funded);
+    let old_status = contract.status.clone();
+    if contract.funded_amount >= total_amount {
+        if old_status == ContractStatus::Created || old_status == ContractStatus::PartiallyFunded {
+            contract.status = ContractStatus::Funded;
+            emit_status_changed(env, contract_id, old_status, ContractStatus::Funded);
+        }
+    } else if contract.funded_amount > 0 {
+        if old_status == ContractStatus::Created {
+            contract.status = ContractStatus::PartiallyFunded;
+            emit_status_changed(
+                env,
+                contract_id,
+                old_status,
+                ContractStatus::PartiallyFunded,
+            );
+        }
     }
 
     env.storage()
@@ -60,23 +74,38 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     true
 }
 
-#[test]
-fn deposit_emits_status_changed_event() {
-    let env = Env::default();
-    env.mock_all_auths();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test::{create_contract, register_client, total_milestone_amount};
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::TryFromVal;
+    extern crate std;
+    use std::format;
 
-    let client = register_client(&env);
-    let (client_addr, _, contract_id) = create_contract(&env, &client);
+    #[test]
+    fn deposit_emits_status_changed_event() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &total_milestone_amount(),
-    ));
+        let client = register_client(&env);
+        let (client_addr, _, contract_id) = create_contract(&env, &client);
 
-    let events = env.events().all();
+        assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
 
-    assert!(events.iter().any(|e| {
-        format!("{:?}", e).contains("status_changed")
-    }));
+        let events = env.events().all();
+
+        assert!(events.iter().any(|e| {
+            let topics = &e.1;
+            if topics.len() > 0 {
+                if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(0).unwrap()) {
+                    sym == Symbol::new(&env, "status_changed")
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }));
+    }
 }

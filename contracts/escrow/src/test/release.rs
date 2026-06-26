@@ -53,7 +53,7 @@ fn rejects_release_without_sufficient_balance() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &100_i128));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::InsufficientFunds);
+    assert_contract_error(result, Error::InsufficientFunds);
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn rejects_release_of_invalid_milestone_index() {
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
     let result = client.try_release_milestone(&contract_id, &client_addr, &99);
-    assert_contract_error(result, EscrowError::InvalidMilestone);
+    assert_contract_error(result, Error::IndexOutOfBounds);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn rejects_releasing_refunded_milestone() {
 
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
     let result = client.try_release_milestone(&contract_id, &client_addr, &1);
-    assert_contract_error(result, EscrowError::AlreadyRefunded);
+    assert_contract_error(result, Error::AlreadyRefunded);
 }
 
 #[test]
@@ -94,9 +94,8 @@ fn rejects_releasing_same_milestone_twice() {
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    assert_contract_error(result, EscrowError::AlreadyReleased);
+    assert_contract_error(result, Error::MilestoneAlreadyReleased);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,9 +285,6 @@ fn work_evidence_rejects_paused_contract() {
     let env = Env::default();
     env.mock_all_auths();
     let escrow = register_client(&env);
-
-    let admin = Address::generate(&env);
-    escrow.initialize(&admin);
 
     let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &escrow);
     escrow.deposit_funds(&contract_id, &client_addr, &total_milestone_amount());

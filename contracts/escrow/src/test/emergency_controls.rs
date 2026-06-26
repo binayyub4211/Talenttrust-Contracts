@@ -85,7 +85,7 @@ fn emergency_blocks_create_contract() {
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
         ),
-        EscrowError::ContractPaused,
+        EscrowError::EmergencyActive,
     );
 }
 
@@ -100,7 +100,7 @@ fn emergency_blocks_deposit_funds() {
 
     super::assert_contract_error(
         client.try_deposit_funds(&id, &client_addr, &50_i128),
-        EscrowError::ContractPaused,
+        EscrowError::EmergencyActive,
     );
 }
 
@@ -115,7 +115,7 @@ fn emergency_blocks_release_milestone() {
 
     super::assert_contract_error(
         client.try_release_milestone(&id, &client_addr, &0),
-        EscrowError::ContractPaused,
+        EscrowError::EmergencyActive,
     );
 }
 
@@ -151,7 +151,7 @@ fn emergency_blocks_cancel_contract() {
 
     super::assert_contract_error(
         client.try_cancel_contract(&id, &client_addr),
-        EscrowError::ContractPaused,
+        EscrowError::EmergencyActive,
     );
 }
 

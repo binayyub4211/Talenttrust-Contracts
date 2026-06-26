@@ -68,3 +68,14 @@ authority for released state.
   balance-changing operations.
 - A milestone release flag can move from absent/false to true only once.
 - Reputation issuance is guarded by `ReputationIssued(contract_id)`.
+
+## Read-Only Views and TTL Extensions
+
+### `get_contract_summary(contract_id)`
+The `get_contract_summary` entrypoint compiles a read-only `ContractSummary` struct of a contract's metadata and its milestones for off-chain consumers (front-ends and indexers).
+
+To prevent active contract details from expiring and getting archived by the network, querying `get_contract_summary` automatically extends the persistent storage TTL for:
+- The contract record (`DataKey::Contract(contract_id)`)
+- The milestones vector (`(DataKey::Contract(contract_id), "milestones")`)
+
+This allows off-chain services or users to keep contract storage alive through reads without requiring caller authentication or mutating transaction fees.

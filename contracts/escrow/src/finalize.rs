@@ -49,18 +49,18 @@ impl Escrow {
         if env
             .storage()
             .persistent()
-            .get::<_, bool>(&DataKey::Paused)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(EscrowError::ContractPaused);
-        }
-        if env
-            .storage()
-            .persistent()
             .get::<_, bool>(&DataKey::Emergency)
             .unwrap_or(false)
         {
             env.panic_with_error(EscrowError::EmergencyActive);
+        }
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::ContractPaused);
         }
     }
 
