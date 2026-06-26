@@ -107,6 +107,16 @@ pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
     a.checked_add(b)
 }
 
+/// Returns the symbol used for storing milestone vectors.
+///
+/// This centralizes the key symbol definition and uses `symbol_short!` to
+/// eliminate runtime symbol construction overhead.
+#[inline(always)]
+pub fn milestone_symbol(env: &Env) -> Symbol {
+    let _ = env;
+    symbol_short!("milestone")
+}
+
 #[contractimpl]
 impl Escrow {
     // ── Hello / CI ───────────────────────────────────────────────────────────
@@ -1169,7 +1179,7 @@ impl Escrow {
         contract_id: u32,
         milestone_index: u32,
     ) -> Option<String> {
-        let milestone_key = Symbol::new(&env, "milestones");
+        let milestone_key = crate::milestone_symbol(&env);
         let milestones: Vec<Milestone> = env
             .storage()
             .persistent()

@@ -45,7 +45,10 @@ Protocol fee implementation is tracked in
 ## Milestone Released State — Single Source of Truth
 
 `release_milestone` sets `milestone.released = true` inside the persisted
-`Vec<Milestone>` stored under `(DataKey::Contract(id), "milestones")`.
+`Vec<Milestone>` stored under `(DataKey::Contract(id), milestone_symbol)` where `milestone_symbol` is derived via the centralized `crate::milestone_symbol` helper returning `symbol_short!("milestone")`.
+
+> [!WARNING]
+> **Migration Note:** The storage key symbol for milestones was shortened from `"milestones"` to `"milestone"` to allow optimization using compile-time `symbol_short!("milestone")` constants, reducing runtime host-call overhead. Consequently, any milestones persisted under the old `"milestones"` key in older contract versions will not be readable in this version without a storage migration.
 
 `summarize_contract` (called by `finalize_contract`) derives
 `released_milestone_count` by iterating that same vector and counting

@@ -759,7 +759,7 @@ fn get_milestones_read_extends_persistent_ttl() {
 
     let bump_threshold = ttl::PERSISTENT_BUMP_THRESHOLD as u32;
     let extension = ttl::PERSISTENT_TTL_LEDGERS as u32;
-    let milestone_key = Symbol::new(&env, "milestones");
+    let milestone_key = crate::milestone_symbol(&env);
 
     let initial_ttl: u32 = env.as_contract(&client.address, || {
         env.storage()
@@ -810,7 +810,7 @@ fn get_work_evidence_read_extends_persistent_ttl() {
 
     let bump_threshold = ttl::PERSISTENT_BUMP_THRESHOLD as u32;
     let extension = ttl::PERSISTENT_TTL_LEDGERS as u32;
-    let milestone_key = Symbol::new(&env, "milestones");
+    let milestone_key = crate::milestone_symbol(&env);
 
     let initial_ttl: u32 = env.as_contract(&client.address, || {
         env.storage()
@@ -1032,4 +1032,13 @@ fn read_getters_unchanged_after_pause() {
         Err(Ok(e)) => assert_eq!(e, soroban_sdk::Error::from(EscrowError::ContractNotFound)),
         other => panic!("expected ContractNotFound, got {:?}", other),
     };
+}
+
+/// Asserts that `milestone_symbol` resolves to the correct short symbol `symbol_short!("milestone")`.
+#[test]
+fn test_milestone_symbol_integrity() {
+    let env = Env::default();
+    let helper_symbol = crate::milestone_symbol(&env);
+    let expected_symbol = symbol_short!("milestone");
+    assert_eq!(helper_symbol, expected_symbol);
 }

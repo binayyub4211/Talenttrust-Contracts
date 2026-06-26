@@ -92,7 +92,7 @@ pub fn create_contract_impl(
             refunded_amount: 0,
         });
     }
-    let milestone_key = Symbol::new(&env, "milestones");
+    let milestone_key = crate::milestone_symbol(&env);
     env.storage()
         .persistent()
         .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);

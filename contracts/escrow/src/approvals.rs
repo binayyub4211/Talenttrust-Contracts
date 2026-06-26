@@ -242,7 +242,7 @@ mod tests {
                 }],
             );
             let _ = release_auth;
-            let milestone_key = Symbol::new(env, "milestones");
+            let milestone_key = crate::milestone_symbol(env);
             env.storage().persistent().set(
                 &(DataKey::Contract(contract_id), milestone_key),
                 &milestones,
@@ -289,7 +289,7 @@ mod tests {
                     refunded_amount: 0,
                 }],
             );
-            let milestone_key = Symbol::new(&env, "milestones");
+            let milestone_key = crate::milestone_symbol(&env);
             env.storage().persistent().set(
                 &(DataKey::Contract(contract_id), milestone_key),
                 &milestones,
@@ -344,7 +344,7 @@ mod tests {
                     refunded_amount: 0,
                 }],
             );
-            let milestone_key = Symbol::new(&env, "milestones");
+            let milestone_key = crate::milestone_symbol(&env);
             env.storage().persistent().set(
                 &(DataKey::Contract(contract_id), milestone_key),
                 &milestones,
@@ -406,7 +406,7 @@ mod tests {
                     refunded_amount: 0,
                 }],
             );
-            let milestone_key = Symbol::new(&env, "milestones");
+            let milestone_key = crate::milestone_symbol(&env);
             env.storage().persistent().set(
                 &(DataKey::Contract(contract_id), milestone_key),
                 &milestones,
