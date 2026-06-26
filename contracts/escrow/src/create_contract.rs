@@ -77,13 +77,9 @@ impl Escrow {
             env.panic_with_error(Error::TooManyMilestones);
         }
 
-        // Retrieve governed parameters for total escrow cap
-        let max_total = if let Some(params) = env.storage().persistent().get::<_, GovernedParameters>(&DataKey::GovernedParameters) {
-            params.max_escrow_total_stroops
-        } else {
-            // If governance parameters are not set, allow any total (use max i128)
-            i128::MAX
-        };
+        ttl::extend_next_contract_id_ttl(&env);
+
+        let id = Self::next_contract_id(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
@@ -142,9 +138,7 @@ impl Escrow {
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
 
-        bump_next_contract_id(&env, id);
-
-        ttl::extend_next_contract_id_ttl(&env);
+        Self::bump_next_contract_id(&env, id);
 
         env.events().publish(
             (symbol_short!("created"), id),
@@ -153,34 +147,34 @@ impl Escrow {
 
         id
     }
-}
 
-/// Returns the next contract id after verifying the slot is unused.
-fn next_contract_id(env: &Env) -> u32 {
-    let id: u32 = env
-        .storage()
-        .persistent()
-        .get(&DataKey::NextContractId)
-        .unwrap_or(1);
+    /// Returns the next contract id after verifying the slot is unused.
+    fn next_contract_id(env: &Env) -> u32 {
+        let id: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(1);
 
-    if env
-        .storage()
-        .persistent()
-        .get::<_, Contract>(&DataKey::Contract(id))
-        .is_some()
-    {
-        env.panic_with_error(Error::ContractIdCollision);
+        if env
+            .storage()
+            .persistent()
+            .get::<_, Contract>(&DataKey::Contract(id))
+            .is_some()
+        {
+            env.panic_with_error(Error::ContractIdCollision);
+        }
+
+        id
     }
 
-    id
-}
-
-/// Advances [`DataKey::NextContractId`] after a contract is persisted.
-fn bump_next_contract_id(env: &Env, id: u32) {
-    let next_id = id
-        .checked_add(1)
-        .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
-    env.storage()
-        .persistent()
-        .set(&DataKey::NextContractId, &next_id);
+    /// Advances [`DataKey::NextContractId`] after a contract is persisted.
+    fn bump_next_contract_id(env: &Env, id: u32) {
+        let next_id = id
+            .checked_add(1)
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &next_id);
+    }
 }
