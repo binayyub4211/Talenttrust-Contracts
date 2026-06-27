@@ -200,6 +200,10 @@ pub struct Milestone {
     pub refunded: bool,
     pub work_evidence: Option<String>,
     pub refunded_amount: i128,
+    /// Optional Unix timestamp (seconds) after which the client may claim
+    /// a timeout refund for this milestone without arbiter involvement.
+    /// None means no deadline — the milestone never expires.
+    pub deadline: Option<u64>,
 }
 
 /// Contract lifecycle states.
