@@ -14,6 +14,7 @@ mod emergency_controls;
 mod mainnet_readiness;
 mod pause_controls;
 mod persistence;
+mod refund;
 mod release;
 mod release_authorization;
 
@@ -102,18 +103,18 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// Assert that a `try_*` call returns the expected contract error.
 ///
 /// Soroban `try_*` methods return:
-///   `Result<Result<T, ConversionError>, Result<soroban_sdk::Error, InvokeError>>`
+///   `Result<Result<T, IE>, Result<soroban_sdk::Error, InvokeError>>`
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
+/// The inner error type `IE` is generic to handle both `ConversionError` (bool
+/// returns) and `soroban_sdk::Error` (numeric returns like i128).
 pub fn assert_contract_error<
     T: core::fmt::Debug,
+    IE: core::fmt::Debug,
     E: Into<soroban_sdk::Error> + core::fmt::Debug,
 >(
-    result: Result<
-        Result<T, soroban_sdk::ConversionError>,
-        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
-    >,
+    result: Result<Result<T, IE>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
     expected: E,
 ) {
     match result {

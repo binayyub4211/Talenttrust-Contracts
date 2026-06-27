@@ -1,8 +1,8 @@
 use crate::{
-    DataKey, Error, Escrow, EscrowArgs, EscrowClient, EscrowError, GovernedParameters,
-    ReadinessChecklist, ADMIN_ROTATION_MIN_DELAY_LEDGERS,
+    DataKey, Escrow, EscrowError, GovernedParameters, ReadinessChecklist,
+    ADMIN_ROTATION_MIN_DELAY_LEDGERS,
 };
-use soroban_sdk::{contractimpl, contracttype, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
 
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
 
@@ -17,8 +17,7 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
         admin.require_auth();
 
         let old_bps: u32 = env
@@ -58,8 +57,7 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
         admin.require_auth();
 
         env.storage().persistent().set(
@@ -103,7 +101,7 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
         env.storage()
             .persistent()

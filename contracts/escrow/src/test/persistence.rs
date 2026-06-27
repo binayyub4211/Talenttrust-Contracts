@@ -826,12 +826,6 @@ fn get_work_evidence_read_extends_persistent_ttl() {
             .saturating_add(initial_ttl.saturating_sub(bump_threshold) + 1);
     });
 
-    env.as_contract(&client.address, || {
-        env.storage()
-            .instance()
-            .extend_ttl(ttl::LEDGERS_PER_DAY * 60, ttl::LEDGERS_PER_DAY * 60);
-    });
-
     let result = client.get_work_evidence(&contract_id, &0);
     assert_eq!(result, Some(ev.clone()));
 
