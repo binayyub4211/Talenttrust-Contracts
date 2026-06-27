@@ -22,7 +22,7 @@ mod tests {
             funded_amount: available,
             released_amount: 0,
             refunded_amount: 0,
-            total_deposited: available,
+
             status: ContractStatus::Funded,
             release_authorization: ReleaseAuthorization::ClientOnly,
             reputation_issued: false,

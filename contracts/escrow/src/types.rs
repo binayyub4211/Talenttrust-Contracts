@@ -125,6 +125,7 @@ pub enum DataKey {
     ReputationIssued(u32),
     PendingReputationCredits(Address),
     Reputation(Address),
+    ReputationComment(u32),
     // Client migration
     PendingClientMigration(u32),
     // Protocol / governance
@@ -215,3 +216,4 @@ pub enum Error {
     EmptyComment = 29,
     CommentTooLong = 30,
 }
+

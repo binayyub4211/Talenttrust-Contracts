@@ -2,7 +2,7 @@ use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
 use crate::types::{
     Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
 };
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Records the caller's approval for a milestone release in temporary storage.
 ///
@@ -246,7 +246,6 @@ mod tests {
             freelancer: freelancer.clone(),
             arbiter: None,
             status: ContractStatus::Funded,
-            total_deposited: 1000,
             funded_amount: 1000,
             released_amount: 0,
             refunded_amount: 0,
@@ -302,7 +301,6 @@ mod tests {
             freelancer: freelancer.clone(),
             arbiter: None,
             status: ContractStatus::Funded,
-            total_deposited: 1000,
             funded_amount: 1000,
             released_amount: 0,
             refunded_amount: 0,
@@ -365,7 +363,6 @@ mod tests {
             freelancer: freelancer.clone(),
             arbiter: None,
             status: ContractStatus::Funded,
-            total_deposited: 1000,
             funded_amount: 1000,
             released_amount: 0,
             refunded_amount: 0,

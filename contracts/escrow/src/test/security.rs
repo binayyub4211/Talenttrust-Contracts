@@ -116,7 +116,7 @@ fn issue_reputation_rejects_unfinished_contract() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::NotCompleted);
 }
 
@@ -127,7 +127,7 @@ fn issue_reputation_rejects_invalid_rating() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &0);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::InvalidRating);
 }
 
@@ -138,8 +138,8 @@ fn issue_reputation_once_per_contract() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
-    assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5));
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &4);
+    assert!(client.issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")));
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::ReputationAlreadyIssued);
 }
 
@@ -151,7 +151,7 @@ fn issue_reputation_rejects_freelancer_mismatch() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let wrong_freelancer = soroban_sdk::Address::generate(&env);
 
-    let result = client.try_issue_reputation(&contract_id, &client_addr, &wrong_freelancer, &5);
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::FreelancerMismatch);
 }
 
@@ -163,6 +163,6 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let (_client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     let unauthorized = soroban_sdk::Address::generate(&env);
 
-    let result = client.try_issue_reputation(&contract_id, &unauthorized, &freelancer_addr, &5);
+    let result = client.try_issue_reputation(&contract_id, &unauthorized, &5_u32, &soroban_sdk::String::from_str(&env, "Great"));
     super::assert_contract_error(result, EscrowError::UnauthorizedRole);
 }
