@@ -92,3 +92,22 @@ To prevent active contract details from expiring and getting archived by the net
 - The milestones vector (`(DataKey::Contract(contract_id), "milestones")`)
 
 This allows off-chain services or users to keep contract storage alive through reads without requiring caller authentication or mutating transaction fees.
+## TTL Policy Overview
+
+The escrow contract uses a deterministic TTL model defined in `contracts/escrow/src/ttl.rs`. The key constants and their meanings are:
+
+| Constant | Ledger count | Approx. days | Governs |
+|---|---|---|---|
+| `LEDGERS_PER_DAY` | 17_280 | 1 | Conversion factor |
+| `PENDING_APPROVAL_TTL_LEDGERS` | 120_960 | 7 | Transient approval entries (temporary storage) |
+| `PENDING_MIGRATION_TTL_LEDGERS` | 362_880 | 21 | Transient migration entries (temporary storage) |
+| `PERSISTENT_TTL_LEDGERS` | 518_400 | 30 | Persistent contract data (persistent storage) |
+| `PENDING_APPROVAL_BUMP_THRESHOLD` | 17_280 | 1 | Bump‑on‑read threshold for approvals |
+| `PENDING_MIGRATION_BUMP_THRESHOLD` | 51_840 | 3 | Bump‑on‑read threshold for migrations |
+| `PERSISTENT_BUMP_THRESHOLD` | 120_960 | 7 | Bump‑on‑read threshold for persistent entries |
+
+**Bump‑on‑read** – When a transient entry is accessed via the contract and its remaining TTL drops below the corresponding bump threshold, the TTL is automatically extended to the full constant value. This keeps active entries alive while allowing stale entries to expire.
+
+**Eviction** – Persistent entries (contracts, milestones, reputation indices) are evicted if they are not accessed for `PERSISTENT_TTL_LEDGERS` (≈30 days). After eviction, reads return `None`, implementing a fail‑closed security posture.
+
+**`read_if_live` semantics** – Returns `None` for both absent keys and keys that have expired and been evicted, ensuring that missing approvals or migrations are treated as invalid.
