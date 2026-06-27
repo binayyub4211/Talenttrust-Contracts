@@ -1,8 +1,10 @@
 # Escrow Integration Guide
 
 This guide documents the entrypoints currently implemented by the escrow
-contract. Planned features are listed separately and linked to their tracking
-issues so integrators can distinguish live API from roadmap.
+contract. For a compact ABI-style inventory of the live public surface, see
+[abi-reference.md](abi-reference.md). Planned features are listed separately and
+linked to their tracking issues so integrators can distinguish live API from
+roadmap.
 
 ## Module Map
 
@@ -36,6 +38,7 @@ Read-only queries:
 - `get_milestones(contract_id) -> Vec<Milestone>`
 - `get_refundable_balance(contract_id) -> i128`
 - `get_milestone_approvals(contract_id, milestone_index) -> Option<MilestoneApprovals>`
+- `get_work_evidence(contract_id, milestone_index) -> Option<String>`
 - `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_average_rating(freelancer) -> Option<i128>` — scaled average (see [Average Rating](#average-rating))
@@ -91,6 +94,11 @@ Per-getter details:
   when the contract id is unknown. Does not extend persistent TTL because
   approvals live in temporary storage bounded by
   `PENDING_APPROVAL_TTL_LEDGERS`.
+- `get_work_evidence(contract_id, milestone_index)` returns `Some(String)`
+  if the milestone exists and work evidence was submitted via
+  `submit_work_evidence`. Returns `None` when the index is out of bounds or
+  no evidence was recorded. Panics `ContractNotFound` for an unknown id.
+  Reads persist the milestones entry's TTL, consistent with `get_milestones`.
 
 These properties are locked in by tests under
 `contracts/escrow/src/test/persistence.rs` (issue #475).
@@ -209,8 +217,10 @@ escrow.release_milestone(&contract_id, &client_addr, &0);
    the milestone is marked released and the contract status is updated — so
    a token-transfer failure leaves the contract untouched.
 
-When the final milestone is released, status becomes `Completed` and one
-pending reputation credit is added for the freelancer.
+Whenever a contract successfully transitions to the `Completed` status—either 
+through the final milestone release, a refund operation that leaves some 
+milestones released, or a dispute resolution—exactly one pending reputation 
+credit is granted to the freelancer.
 
 `PendingReputationCredits` is a non-negative counter that tracks completed
 contracts awaiting client-issued reputation for a freelancer. `issue_reputation`
