@@ -1,6 +1,4 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone};
 use soroban_sdk::{contractimpl, Env, Symbol, Vec};
 
 #[contractimpl]
@@ -52,14 +50,7 @@ impl Escrow {
 
         contract.client.require_auth();
 
-        let milestone_key = Symbol::new(&env, "milestones");
-        let mut milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-            .unwrap();
-
-        ttl::extend_milestone_ttl(&env, contract_id);
+        let mut milestones: Vec<Milestone> = ttl::load_milestones(&env, contract_id);
 
         let mut total_refund_amount: i128 = 0;
 
@@ -105,15 +96,12 @@ impl Escrow {
             }
         }
 
-        env.storage().persistent().set(
-            &(DataKey::Contract(contract_id), milestone_key),
-            &milestones,
-        );
+        ttl::store_milestones(&env, contract_id, &milestones);
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
 
-        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+        ttl::extend_contract_ttl(&env, contract_id);
 
         total_refund_amount
     }
