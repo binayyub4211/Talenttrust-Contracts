@@ -35,12 +35,8 @@ mod ttl;
 mod types;
 mod utils;
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Env, String,
-    Symbol, Vec,
-};
-
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, MAX_SINGLE_AMOUNT_STROOPS};
+pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
@@ -49,18 +45,83 @@ pub use types::{
     ReleaseAuthorization, Reputation, SplitAmounts, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
-pub type EscrowError = Error;
+pub(crate) fn emit_status_changed(
+    env: &Env,
+    contract_id: u32,
+    old_status: ContractStatus,
+    new_status: ContractStatus,
+) {
+    env.events().publish(
+        (Symbol::new(env, "status_changed"), contract_id),
+        (
+            old_status as u32,
+            new_status as u32,
+            env.ledger().timestamp(),
+        ),
+    );
+}
+
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+    Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
 
+pub const MAX_MILESTONES: u32 = 10;
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
 
-
-
-
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
+/// Governance-level errors for admin-gated operations.
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum EscrowError {
+    InvalidParticipant = 1,
+    EmptyMilestones = 2,
+    InvalidMilestoneAmount = 3,
+    InvalidDepositAmount = 4,
+    InvalidMilestone = 5,
+    ContractNotFound = 6,
+    EmptyRefundRequest = 7,
+    DuplicateMilestoneInRefund = 8,
+    AlreadyReleased = 9,
+    AlreadyRefunded = 10,
+    InsufficientFunds = 11,
+    AlreadyInitialized = 12,
+    InsufficientAccumulatedFees = 13,
+    /// Returned by lifecycle entrypoints when `initialize` has not been called.
+    ///
+    /// All money-flow operations require initialization so the admin-controlled
+    /// safety rails (pause, emergency controls, protocol fees) are always in
+    /// scope before any funds can move.
+    NotInitialized = 14,
+    UnauthorizedRole = 15,
+    ContractPaused = 16,
+    EmergencyActive = 17,
+    InvalidState = 18,
+    InvalidRating = 19,
+    SelfRating = 20,
+    ReputationAlreadyIssued = 21,
+    NotCompleted = 22,
+    FreelancerMismatch = 23,
+    InvalidStatusTransition = 24,
+    ArbiterRequired = 25,
+    InvalidDisputeSplit = 26,
+    AccountingInvariantViolated = 27,
+    PotentialOverflow = 28,
+    AlreadyFinalized = 29,
+    AmountMustBePositive = 30,
+    /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
+    EvidenceTooLong = 31,
+    MissingArbiter = 32,
+    InvalidArbiter = 33,
+    InvalidParticipants = 34,
+    TooManyMilestones = 35,
+    EmptyComment = 36,
+    CommentTooLong = 37,
+    InvalidProtocolParameters = 38,
+    TimelockNotElapsed = 39,
 }
 
 #[contractimpl]
@@ -1162,13 +1223,15 @@ impl Escrow {
         caller.require_auth();
         Self::require_not_finalized(&env, contract_id);
         contract.status = ContractStatus::Cancelled;
-        // emit_status_changed(env, contract_id, old_status, ContractStatus::Cancelled);
+        emit_status_changed(&env, contract_id, old_status, ContractStatus::Cancelled);
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
         ttl::extend_contract_ttl(&env, contract_id);
         true
     }
+
+    // ── Dispute management ────────────────────────────────────────────────────
 
     // ── Reputation ───────────────────────────────────────────────────────────
 
@@ -1470,6 +1533,12 @@ impl Escrow {
         milestones.get(milestone_index).unwrap().work_evidence
     }
 
+    // -----------------------------------------------------------------------
+    // Internal helpers
+    // -----------------------------------------------------------------------
+
+    // ── Finalization ─────────────────────────────────────────────────────────
+
     // ── Governance ───────────────────────────────────────────────────────────
 
     /// Returns the total accumulated protocol fees in stroops.
@@ -1581,21 +1650,6 @@ impl Escrow {
     }
 
     // ── Protocol fee helpers ─────────────────────────────────────────────────
-
-    pub(crate) fn read_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        let fee_bps_i128 = fee_bps as i128;
-        amount
-            .checked_mul(fee_bps_i128)
-            .and_then(|v| v.checked_div(10000))
-            .unwrap_or(0)
-    }
 
     // ── Internal guards ──────────────────────────────────────────────────────
 

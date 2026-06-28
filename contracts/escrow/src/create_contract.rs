@@ -1,6 +1,6 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
-    ReleaseAuthorization,
+    safe_add_amounts, ttl, Contract, ContractStatus, DataKey, Error, EscrowError, Milestone,
+    ReleaseAuthorization, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -37,7 +37,15 @@ pub fn create_contract_impl(
     client.require_auth();
 
     if client == freelancer {
-        env.panic_with_error(EscrowError::InvalidParticipants);
+        env.panic_with_error(EscrowError::InvalidParticipant);
+    }
+
+    if milestones.is_empty() {
+        env.panic_with_error(EscrowError::EmptyMilestones);
+    }
+
+    if milestones.len() > MAX_MILESTONES {
+        env.panic_with_error(EscrowError::TooManyMilestones);
     }
 
     match release_authorization {
@@ -55,44 +63,17 @@ pub fn create_contract_impl(
         }
     }
 
-    if milestones.is_empty() {
-        env.panic_with_error(EscrowError::EmptyMilestones);
-    }
-
+    let mut total_amount = 0_i128;
     for amount in milestones.iter() {
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidMilestoneAmount);
         }
+        total_amount = safe_add_amounts(total_amount, amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
     }
 
-    // Check governed max_escrow_total_stroops cap if set
-    let total_milestones: i128 = milestones.iter().map(|m| m).sum();
-    if let Some(params) = env
-        .storage()
-        .persistent()
-        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-    {
-        if params.max_escrow_total_stroops > 0 && total_milestones > params.max_escrow_total_stroops
-        {
-            env.panic_with_error(EscrowError::EscrowCapExceeded);
-        }
-    }
-
-    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, &x| {
-        acc.checked_add(x)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
-    });
-
-    if let Some(params) = env
-        .storage()
-        .persistent()
-        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-    {
-        if params.max_escrow_total_stroops > 0
-            && total_milestones_amount > params.max_escrow_total_stroops
-        {
-            env.panic_with_error(EscrowError::EscrowCapExceeded);
-        }
+    if total_amount > MAX_TOTAL_ESCROW_STROOPS {
+        env.panic_with_error(EscrowError::InvalidMilestoneAmount);
     }
 
     let id = next_contract_id(&env);

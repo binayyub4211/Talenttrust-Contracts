@@ -14,7 +14,7 @@ mod approval_expiry;
 mod authorization_matrix_validation;
 mod cancel_contract;
 mod client_migration;
-mod deposit;
+mod create_contract_bounds;
 mod dispute;
 mod emergency_controls;
 mod flows;
@@ -149,10 +149,10 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// including both `Error` and the canonical `Error` from `types.rs`.
 pub fn assert_contract_error<
     T: core::fmt::Debug,
-    IE: core::fmt::Debug,
+    InnerE: core::fmt::Debug,
     E: Into<soroban_sdk::Error> + core::fmt::Debug,
 >(
-    result: Result<Result<T, IE>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+    result: Result<Result<T, InnerE>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
     expected: E,
 ) {
     match result {

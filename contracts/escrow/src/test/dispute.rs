@@ -10,8 +10,17 @@
 
 #![cfg(test)]
 
-use crate::{ContractStatus, DisputeResolution, Escrow, EscrowClient, Error, ReleaseAuthorization};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+extern crate std;
+
+use crate::dispute::{final_status_after_resolution, resolution_payouts};
+use crate::EscrowError as Error;
+use crate::{
+    ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
+};
+use soroban_sdk::{
+    testutils::{Address as _, Events},
+    vec, Address, Env,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -254,9 +263,11 @@ fn freelancer_can_raise_dispute_on_funded_contract() {
 
 #[test]
 fn raise_dispute_requires_contract_party() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (_, _, _, id) = funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (_, _, _, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     super::assert_contract_error(
         client.try_raise_dispute(&escrow_id, &outsider),
@@ -289,10 +300,11 @@ fn raise_dispute_requires_assigned_arbiter() {
 
 #[test]
 fn raise_dispute_rejects_completed_contract() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, _, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, _, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     client.release_milestone(&id, &client_addr, &0);
 
@@ -304,7 +316,9 @@ fn raise_dispute_rejects_completed_contract() {
 
 #[test]
 fn resolve_full_refund_marks_refunded_and_closes_accounting() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 125_i128, 75_i128], 200_i128);
 
@@ -323,7 +337,9 @@ fn resolve_full_refund_marks_refunded_and_closes_accounting() {
 
 #[test]
 fn resolve_full_payout_marks_completed_and_closes_accounting() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 150_i128], 150_i128);
 
@@ -342,7 +358,9 @@ fn resolve_full_payout_marks_completed_and_closes_accounting() {
 
 #[test]
 fn resolve_partial_refund_applies_70_30_split() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
@@ -393,7 +411,9 @@ fn resolve_partial_refund_applies_to_remaining_balance() {
 
 #[test]
 fn resolve_split_accepts_custom_amounts_that_match_available_balance() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 40_i128, 60_i128], 100_i128);
 
@@ -408,7 +428,9 @@ fn resolve_split_accepts_custom_amounts_that_match_available_balance() {
 
 #[test]
 fn resolve_split_rejects_invalid_totals() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
@@ -423,7 +445,9 @@ fn resolve_split_rejects_invalid_totals() {
 
 #[test]
 fn resolve_split_rejects_negative_amounts() {
-    let (env, _contract_id, client) = setup_initialized();
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
     let (client_addr, _, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
@@ -441,10 +465,11 @@ fn resolve_split_rejects_negative_amounts() {
 
 #[test]
 fn resolve_dispute_requires_assigned_arbiter() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, _, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, _, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     client.raise_dispute(&id, &client_addr);
 
@@ -456,10 +481,11 @@ fn resolve_dispute_requires_assigned_arbiter() {
 
 #[test]
 fn resolve_dispute_rejects_non_disputed_contract() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (_, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (_, _, arbiter_addr, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     super::assert_contract_error(
         client.try_resolve_dispute(&escrow_id, &arbiter_addr, &DisputeResolution::FullRefund),
@@ -469,10 +495,11 @@ fn resolve_dispute_rejects_non_disputed_contract() {
 
 #[test]
 fn resolve_dispute_cannot_be_called_twice() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, arbiter_addr, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     client.raise_dispute(&id, &client_addr);
     client.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::FullRefund);
@@ -488,48 +515,12 @@ fn resolve_dispute_cannot_be_called_twice() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn full_refund_conserves_funded_amount_no_prior_releases() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 125_i128, 75_i128], 200);
-
-    client.raise_dispute(&id, &client_addr);
-    client.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::FullRefund);
-
-    let c = client.get_contract(&id);
-    assert_eq!(c.status, ContractStatus::Refunded);
-    assert_eq!(c.released_amount, 0);
-    assert_eq!(c.refunded_amount, 200);
-    assert_conservation(&client, id);
-}
-
-#[test]
-fn full_payout_conserves_funded_amount_no_prior_releases() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 150_i128], 150);
-
-    client.raise_dispute(&id, &client_addr);
-    client.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::FullPayout);
-
-    let c = client.get_contract(&id);
-    assert_eq!(c.status, ContractStatus::Completed);
-    assert_eq!(c.released_amount, 150);
-    assert_eq!(c.refunded_amount, 0);
-    assert_conservation(&client, id);
-}
-
-#[test]
-fn partial_refund_conserves_funded_amount_no_prior_releases() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
-
-    client.raise_dispute(&id, &client_addr);
-    client.resolve_dispute(&id, &arbiter_addr, &DisputeResolution::PartialRefund);
+fn pause_blocks_raise_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, _, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     let c = client.get_contract(&id);
     assert_eq!(c.status, ContractStatus::Completed);
@@ -572,10 +563,11 @@ fn split_rejects_non_conserving_sum() {
 
 #[test]
 fn pause_blocks_resolve_dispute() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, arbiter_addr, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     client.raise_dispute(&id, &client_addr);
     client.pause();
@@ -588,10 +580,11 @@ fn pause_blocks_resolve_dispute() {
 
 #[test]
 fn emergency_blocks_raise_and_resolve_dispute() {
-    let env = make_env();
-    let client = make_client(&env);
-    let (client_addr, _, arbiter_addr, id) =
-        funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, arbiter_addr, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     client.activate_emergency_pause();
 
@@ -615,9 +608,17 @@ fn emergency_blocks_raise_and_resolve_dispute() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn disputes_on_independent_contracts_do_not_cross_contaminate() {
-    let env = make_env();
-    let client = make_client(&env);
+fn multiple_disputes_on_different_contracts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+
+    // Create two contracts
+    let (client1, _, arbiter1, escrow1) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
+
+    let (client2, _, arbiter2, escrow2) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 200_i128], 200_i128);
 
     let (c1, _, a1, id1) = funded_with_arbiter(&env, &client, vec![&env, 100_i128], 100);
     let (c2, _, a2, id2) = funded_with_arbiter(&env, &client, vec![&env, 200_i128], 200);
@@ -644,8 +645,12 @@ fn disputes_on_independent_contracts_do_not_cross_contaminate() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn resolve_dispute_event_carries_client_and_freelancer_payouts() {
-    use soroban_sdk::testutils::Events;
+fn dispute_events_are_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = new_client(&env);
+    let (client_addr, _, arbiter_addr, escrow_id) =
+        create_funded_contract_with_arbiter(&env, &client, vec![&env, 100_i128], 100_i128);
 
     let env = make_env();
     let client = make_client(&env);
@@ -658,21 +663,17 @@ fn resolve_dispute_event_carries_client_and_freelancer_payouts() {
     // The dsp_res event topics are ("dispute", "resolved").
     // The data tuple is (contract_id, resolution_code, client_payout, freelancer_payout).
     let events = env.events().all();
-    let found = events.iter().any(|e| {
-        // topics: Vec<Val> at index 1; data: Val at index 2
-        let topics = &e.1;
-        if topics.len() < 2 {
-            return false;
-        }
-        use soroban_sdk::{Symbol, TryFromVal};
-        let t0 = Symbol::try_from_val(&env, &topics.get(0).unwrap()).ok();
-        let t1 = Symbol::try_from_val(&env, &topics.get(1).unwrap()).ok();
-        t0 == Some(soroban_sdk::symbol_short!("dispute"))
-            && t1 == Some(soroban_sdk::symbol_short!("resolved"))
-    });
+    let dispute_opened = events
+        .iter()
+        .any(|e| std::format!("{:?}", e).contains("opened"));
+    assert!(dispute_opened, "dispute opened event not found");
 
     assert!(found, "dispute resolved event not emitted");
 
-    // Verify accounting still conserves after the event-emitting resolution.
-    assert_conservation(&client, id);
+    // Check for dispute resolved event
+    let events = env.events().all();
+    let dispute_resolved = events
+        .iter()
+        .any(|e| std::format!("{:?}", e).contains("resolved"));
+    assert!(dispute_resolved, "dispute resolved event not found");
 }

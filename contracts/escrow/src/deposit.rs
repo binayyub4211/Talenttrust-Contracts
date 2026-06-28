@@ -1,13 +1,16 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone,
-};
+use crate::{emit_status_changed, ttl, Contract, ContractStatus, DataKey, Error, Milestone};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
-/// Deposits funds into the contract and allocates them across milestones in order.
-///
-/// Each accepted deposit fills the first underfunded milestone before moving to
-/// the next one. The aggregate `funded_amount` is still maintained for
-/// backward-compatible reads.
+#[cfg(test)]
+extern crate std;
+#[cfg(test)]
+use crate::test::{create_contract, register_client, total_milestone_amount};
+#[cfg(test)]
+use soroban_sdk::testutils::Events;
+#[cfg(test)]
+use std::format;
+
+/// Deposits funds into the contract. Transitions to Funded status when fully funded.
 ///
 /// # Arguments
 /// * `env` - The contract environment
@@ -109,6 +112,7 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
     if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+        let old_status = contract.status.clone();
         contract.status = ContractStatus::Funded;
         env.events().publish(
             (symbol_short!("status"), contract_id),
@@ -129,32 +133,19 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     true
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test::{create_contract, register_client, total_milestone_amount};
-    use soroban_sdk::testutils::Events as _;
-    extern crate std;
-    use std::format;
+#[test]
+fn deposit_emits_status_changed_event() {
+    let env = Env::default();
+    env.mock_all_auths();
 
-    #[test]
-    fn deposit_emits_status_changed_event() {
-        let env = Env::default();
-        env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = create_contract(&env, &client);
 
-        let client = register_client(&env);
-        let (client_addr, _, contract_id) = create_contract(&env, &client);
+    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount(),));
 
-        assert!(client.deposit_funds(
-            &contract_id,
-            &client_addr,
-            &total_milestone_amount(),
-        ));
+    let events = env.events().all();
 
-        let events = env.events().all();
-
-        assert!(events.iter().any(|e| {
-            format!("{:?}", e).contains("status_changed")
-        }));
-    }
+    assert!(events
+        .iter()
+        .any(|e| { format!("{:?}", e).contains("status_changed") }));
 }
