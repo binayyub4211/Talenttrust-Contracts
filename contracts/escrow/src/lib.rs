@@ -602,58 +602,83 @@ impl Escrow {
             env.panic_with_error(Error::InsufficientFunds);
         }
 
-        // Check if there's enough aggregate balance
-        let available_balance =
-            contract.funded_amount - contract.released_amount - contract.refunded_amount;
-        if available_balance < milestone.amount {
-            env.panic_with_error(EscrowError::InsufficientFunds);
-        }
+        let gross_amount = milestone.amount;
 
-        let release_amount = milestone.amount;
-
-        // Transfer tokens from contract to freelancer
-        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
-
-        let token_client = token::Client::new(&env, &token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &contract.freelancer,
-            &release_amount,
-        );
-
-        milestone.released = true;
-        // Record the funded amount on the milestone so it is self-describing.
-        // The deposit path should have already distributed funds to cover this
-        // milestone, but we set it here as a safety measure.
-        milestone.funded_amount = milestone.amount;
-        milestones.set(milestone_index, milestone.clone());
-        contract.released_amount = contract
-            .released_amount
-            .checked_add(milestone.amount)
-            .unwrap_or_else(|| env.panic_with_error(Error::InsufficientFunds));
-
-        // Accumulate protocol fees if initialized with a fee rate and capture
-        // the computed fee for inclusion in the emitted event.
+        // Compute the protocol fee up-front so the available-balance check can
+        // account for both the net payout and the fee that stays in the contract.
+        //
+        /// `protocol_fee` — the portion of `gross_amount` retained by the
+        /// protocol. Deducted from the gross milestone amount before transfer
+        /// so the escrow balance is never overdrawn.
         let protocol_fee: i128 = if Self::is_initialized(&env) {
             let fee_bps = Self::read_protocol_fee_bps(&env);
             if fee_bps > 0 {
-                let fee = Self::calculate_protocol_fee(release_amount, fee_bps);
-                let current_accumulated: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::AccumulatedProtocolFees)
-                    .unwrap_or(0);
-                env.storage().persistent().set(
-                    &DataKey::AccumulatedProtocolFees,
-                    &(current_accumulated + fee),
-                );
-                fee
+                Self::calculate_protocol_fee(&env, gross_amount, fee_bps)
             } else {
                 0
             }
         } else {
             0
         };
+
+        /// `net_amount` — the amount actually transferred to the freelancer
+        /// after deducting the protocol fee.
+        let net_amount = gross_amount - protocol_fee;
+
+        // The available balance must cover the full gross milestone amount
+        // (net payout + fee) without dipping into already-accumulated fees or
+        // other milestones' funds.
+        let accumulated_fees: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccumulatedProtocolFees)
+            .unwrap_or(0);
+        let available_balance = contract.funded_amount
+            - contract.released_amount
+            - contract.refunded_amount
+            - accumulated_fees;
+        if available_balance < gross_amount {
+            env.panic_with_error(EscrowError::InsufficientFunds);
+        }
+
+        // Transfer the net amount (gross minus fee) to the freelancer.
+        // The fee portion remains in the contract's token balance and is
+        // tracked separately in AccumulatedProtocolFees.
+        let token = Self::read_settlement_token(&env).expect("Settlement token not set");
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &contract.freelancer,
+            &net_amount,
+        );
+
+        // Accrue the fee into the protocol's accumulated balance.
+        if protocol_fee > 0 {
+            env.storage().persistent().set(
+                &DataKey::AccumulatedProtocolFees,
+                &(accumulated_fees + protocol_fee),
+            );
+        }
+
+        milestone.released = true;
+        // Record the funded amount on the milestone so it is self-describing.
+        milestone.funded_amount = gross_amount;
+        milestones.set(milestone_index, milestone.clone());
+        // released_amount tracks net amounts paid out to freelancers.
+        // accumulated_fees tracks protocol fees retained in the contract.
+        // Together: released_amount + refunded_amount + accumulated_fees <= funded_amount.
+        contract.released_amount = contract
+            .released_amount
+            .checked_add(net_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        // Accounting invariant: net released + refunded + all accumulated fees
+        // must never exceed the total funded amount.
+        let new_accumulated = accumulated_fees + protocol_fee;
+        let invariant_sum = contract.released_amount + contract.refunded_amount + new_accumulated;
+        if invariant_sum > contract.funded_amount {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
 
         // Clear approvals after successful release
         approvals::clear_approvals(&env, contract_id, milestone_index);
@@ -690,7 +715,7 @@ impl Escrow {
             (symbol_short!("mlstn_rls"), contract_id),
             (
                 milestone_index,
-                release_amount,
+                gross_amount,
                 protocol_fee,
                 contract.released_amount,
                 caller.clone(),
@@ -1776,6 +1801,30 @@ impl Escrow {
     }
 
     // ── Protocol fee helpers ─────────────────────────────────────────────────
+
+    /// Reads the stored protocol fee in basis points (0 = no fee).
+    pub(crate) fn read_protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Computes the protocol fee for a given `amount` at `fee_bps` basis points.
+    ///
+    /// Uses integer floor division: `fee = amount * fee_bps / 10_000`.
+    ///
+    /// # Panics
+    /// Panics with `PotentialOverflow` if `amount * fee_bps` overflows `i128`.
+    pub fn calculate_protocol_fee(env: &Env, amount: i128, fee_bps: u32) -> i128 {
+        if fee_bps == 0 {
+            return 0;
+        }
+        let product = amount
+            .checked_mul(fee_bps as i128)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        product / 10_000
+    }
 
     // ── Internal guards ──────────────────────────────────────────────────────
 
