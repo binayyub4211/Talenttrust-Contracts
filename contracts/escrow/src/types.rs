@@ -359,21 +359,14 @@ pub enum Error {
     TimelockNotElapsed = 48,
     /// The provided protocol parameters are invalid.
     InvalidProtocolParameters = 49,
-    /// The contract's maximum escrowed amount cap would be exceeded.
+    /// The escrow total exceeds the configured governed cap.
     EscrowCapExceeded = 50,
-    /// The milestone deadline has not yet elapsed (used by timeout refund paths).
+    /// A milestone refund was requested before its deadline elapsed.
     MilestoneNotOverdue = 51,
-    /// The settlement token has already been bound and cannot be rebound.
-    ///
-    /// Set via `bind_settlement_token` / `set_settlement_token`. A second bind
-    /// attempt panics with this error so the token identity is immutable for
-    /// the lifetime of the contract — preventing an admin from migrating
-    /// escrow balances to a different SAC mid-flight.
-    SettlementTokenAlreadyBound = 52,
-    /// A path that requires the settlement token to be bound was invoked
-    /// before `bind_settlement_token` succeeded. Use `get_settlement_token`
-    /// to verify bind state before mutating operations.
-    SettlementTokenNotConfigured = 53,
+    /// The escrow contains more milestones than allowed.
+    TooManyMilestones = 52,
+    /// The contract does not currently hold enough settlement token balance.
+    InsufficientEscrowBalance = 53,
 }
 
 /// Contract lifecycle states
@@ -453,6 +446,8 @@ pub enum DepositMode {
     Incremental = 1,
 }
 
+// ── Storage keys ─────────────────────────────────────────────────────────────
+
 // ── Governance / readiness ───────────────────────────────────────────────────
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
@@ -523,12 +518,4 @@ pub enum DisputeResolution {
     FullPayout,
     Split(DisputeSplit),
 }
-
-// ── Canonical contract error type ────────────────────────────────────────────
-//
-// The single authoritative `Error` enum lives in the first half of this file
-// (see the top of the file). Earlier revisions accidentally re-declared it
-// below; that duplicate was removed because it shadowed the canonical
-// definition and prevented the contract from compiling.
-
 

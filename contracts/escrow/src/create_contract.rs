@@ -1,6 +1,6 @@
 use crate::{
-    safe_add_amounts, ttl, Contract, ContractStatus, DataKey, Error, EscrowError, Milestone,
-    ReleaseAuthorization, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS,
+    ttl, Contract, ContractStatus, DataKey, Error, EscrowError, GovernedParameters, Milestone,
+    ReleaseAuthorization, MAX_TOTAL_ESCROW_STROOPS,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
 use crate::{MAX_MILESTONES, amount_validation, types::GovernedParameters};
@@ -162,43 +162,42 @@ impl Escrow {
         }
     }
 
-    let mut total_amount = 0_i128;
-    for amount in milestones.iter() {
+    if milestones.is_empty() {
+        env.panic_with_error(EscrowError::EmptyMilestones);
+    }
+
+    if milestones.len() > crate::MAX_MILESTONES {
+        env.panic_with_error(EscrowError::TooManyMilestones);
+    }
+
+    let total_milestones_amount: i128 = milestones.iter().fold(0i128, |acc, amount| {
         if amount <= 0 {
             env.panic_with_error(EscrowError::InvalidMilestoneAmount);
         }
-        total_amount = safe_add_amounts(total_amount, amount)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-    }
 
-    // Check governed max_escrow_total_stroops cap if set
-    let total_milestones: i128 = milestones.iter().map(|m| m).sum();
-    if let Some(params) = env
-        .storage()
-        .persistent()
-        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-    {
-        if params.max_escrow_total_stroops > 0 && total_milestones > params.max_escrow_total_stroops
-        {
-            env.panic_with_error(EscrowError::EscrowCapExceeded);
-        }
-    }
-
-    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, x| {
-        acc.checked_add(x)
+        acc.checked_add(amount)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
     });
 
-    if let Some(params) = env
+    let governed_cap = env
         .storage()
         .persistent()
         .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
-    {
-        if params.max_escrow_total_stroops > 0
-            && total_milestones_amount > params.max_escrow_total_stroops
+        .map(|params| params.max_escrow_total_stroops)
+        .filter(|cap| *cap > 0)
+        .unwrap_or(MAX_TOTAL_ESCROW_STROOPS);
+
+    if total_milestones_amount > governed_cap {
+        let err = if env
+            .storage()
+            .persistent()
+            .has(&DataKey::GovernedParameters)
         {
-            env.panic_with_error(EscrowError::EscrowCapExceeded);
-        }
+            EscrowError::EscrowCapExceeded
+        } else {
+            EscrowError::InvalidMilestoneAmount
+        };
+        env.panic_with_error(err);
     }
 
     let id = next_contract_id(&env);
