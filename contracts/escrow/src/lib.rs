@@ -147,6 +147,18 @@ impl Escrow {
     /// * `NotInitialized` if `initialize` has not been called
     /// * `UnauthorizedRole` if `admin` is not the stored admin
     /// * `SettlementTokenAlreadyBound` if a token is already bound
+    ///
+    /// # Events
+    /// On a successful, authorized bind this publishes a `settlement_token_bound`
+    /// event so off-chain indexers and monitoring dashboards can observe which
+    /// asset an escrow settles in, and when the binding happened.
+    ///
+    /// * Topics: `(Symbol "settlement_token_bound",)`
+    /// * Data: `(admin: Address, token: Address, timestamp: u64)`
+    ///
+    /// The event only fires after the write succeeds. Rejected binds
+    /// (uninitialized or unauthorized) panic before this point and therefore
+    /// publish nothing. All payload fields are public configuration.
     pub fn bind_settlement_token(env: Env, admin: Address, token: Address) -> bool {
         Self::require_initialized(&env);
         let stored_admin: Address = env
@@ -161,6 +173,13 @@ impl Escrow {
         admin.require_auth();
 
         Self::write_settlement_token(&env, &token);
+
+        // Emit after the binding write succeeds so indexers can track the bound
+        // asset. Consistent topic naming with `init` / `protocol_fee_bps` events.
+        env.events().publish(
+            (Symbol::new(&env, "settlement_token_bound"),),
+            (admin, token, env.ledger().timestamp()),
+        );
         true
     }
 

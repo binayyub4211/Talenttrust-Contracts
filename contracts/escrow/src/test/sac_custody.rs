@@ -157,6 +157,78 @@ fn bind_settlement_token_rejects_uninit() {
     );
 }
 
+/// Returns `true` when at least one published event carries
+/// `settlement_token_bound` as its first topic.
+fn has_settlement_token_bound_event(env: &Env) -> bool {
+    use soroban_sdk::{testutils::Events, TryFromVal};
+    let topic = Symbol::new(env, "settlement_token_bound");
+    env.events().all().iter().any(|event| {
+        event.1.len() > 0
+            && Symbol::try_from_val(env, &event.1.get(0).unwrap())
+                .ok()
+                .as_ref()
+                == Some(&topic)
+    })
+}
+
+#[test]
+fn bind_settlement_token_emits_settlement_token_bound_event() {
+    use soroban_sdk::{testutils::Events, TryFromVal};
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let sac = env.register_stellar_asset_contract(admin.clone());
+    assert!(client.bind_settlement_token(&sac));
+
+    // Topic must be present on a successful, authorized bind.
+    assert!(
+        has_settlement_token_bound_event(&env),
+        "successful bind must publish settlement_token_bound"
+    );
+
+    // Payload must carry (admin, token, timestamp): assert the bound token
+    // address is the third element of the matching event's data tuple.
+    let topic = Symbol::new(&env, "settlement_token_bound");
+    let matching = env
+        .events()
+        .all()
+        .iter()
+        .find(|event| {
+            event.1.len() > 0
+                && Symbol::try_from_val(&env, &event.1.get(0).unwrap())
+                    .ok()
+                    .as_ref()
+                    == Some(&topic)
+        })
+        .expect("event present");
+    let data: SorobanVec<soroban_sdk::Val> =
+        SorobanVec::try_from_val(&env, &matching.2).expect("data is a tuple/vec");
+    let bound_token: Address =
+        Address::try_from_val(&env, &data.get(1).unwrap()).expect("token field");
+    assert_eq!(bound_token, sac);
+}
+
+#[test]
+fn rejected_bind_does_not_emit_settlement_token_bound_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let sac = env.register_stellar_asset_contract(Address::generate(&env));
+
+    // Uninitialized bind is rejected: no event must be published.
+    assert_contract_error(
+        client.try_bind_settlement_token(&sac),
+        EscrowError::NotInitialized,
+    );
+    assert!(
+        !has_settlement_token_bound_event(&env),
+        "rejected (uninitialized) bind must not publish settlement_token_bound"
+    );
+}
+
 // ─── deposit_funds (SAC path) ─────────────────────────────────────────────────
 
 #[test]
