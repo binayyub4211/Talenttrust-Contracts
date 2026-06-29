@@ -320,20 +320,12 @@ pub enum DisputeResolution {
 }
 
 impl DisputeResolution {
-    /// Returns a short numeric code for use in event payloads.
-    ///
-    /// | Variant        | Code |
-    /// |----------------|------|
-    /// | `FullRefund`   |  0   |
-    /// | `PartialRefund`|  1   |
-    /// | `FullPayout`   |  2   |
-    /// | `Split`        |  3   |
     pub fn code(&self) -> u32 {
         match self {
-            DisputeResolution::FullRefund => 0,
-            DisputeResolution::PartialRefund => 1,
-            DisputeResolution::FullPayout => 2,
-            DisputeResolution::Split(_) => 3,
+            Self::FullRefund => 0,
+            Self::PartialRefund => 1,
+            Self::FullPayout => 2,
+            Self::Split(_) => 3,
         }
     }
 }
